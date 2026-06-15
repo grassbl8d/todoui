@@ -556,9 +556,10 @@ func TestPinFocusAndUnpin(t *testing.T) {
 	if m.filter != "" || len(m.list.Items()) != 1 {
 		t.Fatal("view-switch keys should be blocked while pinned")
 	}
-	// banner is shown
-	if !strings.Contains(m.View(), "PINNED") {
-		t.Fatal("pin banner should be visible")
+	// focus screen is shown with the unpin instruction
+	v := m.View()
+	if !strings.Contains(v, "P I N N E D") || !strings.Contains(v, "unpin") {
+		t.Fatal("pinned focus screen should be visible with unpin instructions")
 	}
 	// :unpin releases
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(":")})

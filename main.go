@@ -1980,6 +1980,11 @@ func (m model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
 
+	// Pinned focus mode: a centered card instead of the list.
+	if m.pinnedID != "" && (m.mode == modeList || m.mode == modeCommand) {
+		return m.pinnedFocusView(header)
+	}
+
 	var body string
 	switch m.mode {
 	case modeProjectPick:
@@ -2035,6 +2040,90 @@ func (m model) View() string {
 	m.list.SetHeight(h)
 	parts = append(parts, m.list.View(), footer)
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+}
+
+// pinnedTask returns the currently pinned task from the cache.
+func (m model) pinnedTask() (Task, bool) {
+	for _, t := range m.allTasks {
+		if t.ID == m.pinnedID {
+			return t, true
+		}
+	}
+	return Task{}, false
+}
+
+// pinnedFocusView is the full-screen, centered "focus on one task" card.
+func (m model) pinnedFocusView(header string) string {
+	accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(subColor)
+
+	cardW := m.width - 8
+	if cardW > 72 {
+		cardW = 72
+	}
+	if cardW < 24 {
+		cardW = 24
+	}
+
+	// Big-ish title: spaced letters read larger in a terminal.
+	pinTitle := accent.Render("📌  P I N N E D")
+
+	var rows []string
+	rows = append(rows, pinTitle, "")
+
+	if t, ok := m.pinnedTask(); ok {
+		pc := prioColors[t.Priority]
+		if pc == "" {
+			pc = prioColors["p4"]
+		}
+		badge := lipgloss.NewStyle().Background(pc).Foreground(brightColor).Bold(true).Render(" " + t.Priority + " ")
+		content := lipgloss.NewStyle().Foreground(brightColor).Bold(true).Width(cardW - 8).Align(lipgloss.Center).Render(t.Content)
+		rows = append(rows, badge, "", content, "")
+
+		var meta []string
+		if t.Project != "" {
+			meta = append(meta, lipgloss.NewStyle().Foreground(projectColor).Render(t.Project))
+		}
+		if t.DueDate != "" {
+			meta = append(meta, lipgloss.NewStyle().Foreground(dueColor).Render("due "+t.DueDate))
+		}
+		if t.Deadline != "" {
+			meta = append(meta, lipgloss.NewStyle().Foreground(deadlineColor).Render("⚑ "+t.Deadline))
+		}
+		if t.Labels != "" {
+			meta = append(meta, lipgloss.NewStyle().Foreground(labelColor).Render(t.Labels))
+		}
+		if len(meta) > 0 {
+			rows = append(rows, dim.Render(strings.Join(meta, "   ·   ")))
+		}
+	} else {
+		rows = append(rows, dim.Render("This task isn't loaded right now."), dim.Render("Press s to sync, or :unpin to release."))
+	}
+
+	rows = append(rows, "", strings.Repeat("─", cardW-8))
+	if m.mode == modeCommand {
+		rows = append(rows, "", lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(": ")+m.input.View())
+		rows = append(rows, dim.Render("type unpin, then Enter"))
+	} else {
+		rows = append(rows, "", dim.Render("type ")+accent.Render(":unpin")+dim.Render(" then Enter to release"))
+		rows = append(rows, dim.Render("enter to open · c complete · s sync · q quit"))
+	}
+
+	inner := lipgloss.JoinVertical(lipgloss.Center, rows...)
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(brandRed).
+		Padding(1, 3).
+		Width(cardW).
+		Align(lipgloss.Center).
+		Render(inner)
+
+	bodyH := m.height - lipgloss.Height(header)
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	centered := lipgloss.Place(m.width, bodyH, lipgloss.Center, lipgloss.Center, card)
+	return lipgloss.JoinVertical(lipgloss.Left, header, centered)
 }
 
 // pinBanner is the prominent "you are pinned" notice with the unpin instruction.
