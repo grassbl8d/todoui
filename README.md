@@ -129,23 +129,30 @@ entirely from the keyboard.
 | Key             | Action                                                        |
 |-----------------|--------------------------------------------------------------|
 | `↑` / `↓` `j`/`k` | Move selection                                             |
-| `Enter`         | **Open the task** — view & edit date, priority, labels, name |
+| `n` / `v`       | Next page / previous page (also PgDn/PgUp)                   |
+| `Enter`         | **Open the task** — view & edit due, deadline, priority, labels, name |
 | `a`             | Add a task — opens the **project picker** first              |
-| `A`             | Add a task straight to the **last project** (skip picker)    |
+| `A`             | Add a task straight to the **most recent project**           |
 | `c`             | Complete the selected task                                   |
-| `d`             | Delete the selected task (asks `y`/`n`)                      |
+| `x`             | Delete the selected task (asks first)                        |
 | `p`             | **View by project** — pick a project to filter the list      |
 | `P`             | **Filter by priority** — pick p1–p4 from a menu              |
-| `o`             | **Ongoing** — show all tasks tagged `@ongoing`               |
+| `o`             | **Ongoing** — tasks with your ongoing label (default `@ongoing`) |
+| `f`             | **Follow-up** — tasks with your follow-up label (default `@ffup`) |
+| `T`             | **Due today or earlier** (today + overdue)                  |
+| `d`             | **Deadline is today**                                       |
+| `D`             | **Deadline is today or earlier**                            |
 | `R`             | **Recently added** — the last 10 tasks you created           |
-| `/`             | Search — plain words (local text search) or a filter expr    |
+| `/`             | **Find** — local text search, or a local filter expression  |
+| `?`             | **Online search** — full Todoist filter grammar (needs network) |
 | `1`–`6`         | **Sort** by priority / due / deadline / project / name / labels (`0` = default; repeat to reverse) |
 | `b`             | **Back** — return to the previous view (like a browser)      |
 | `h` / `Esc`     | **Home** — back to all tasks / all projects                  |
 | `r`             | Refresh the view from the local cache                       |
 | `s`             | **Sync** — push queued changes & pull updates               |
+| `O`             | **Options** — ongoing/follow-up labels & auto-sync interval  |
 | `X`             | **Clear data** — remove token, cache & queue (asks first)    |
-| `H` / `?`       | **Help** — open the (scrollable) keyboard reference          |
+| `H`             | **Help** — open the (scrollable) keyboard reference          |
 | `q` / `Ctrl+C`  | Quit                                                         |
 
 ### Task view (press `Enter` on a task)
@@ -170,19 +177,28 @@ then a separator, then all projects (blue). The cursor starts on your most recen
 project. **Just start typing to filter** the list down · `↑`/`↓` to move ·
 `Enter` to select · `Esc` clears the filter (or closes the picker).
 
-### Searching
+### Searching — local (`/`) vs online (`?`)
 
-The search bar (`/`) is **smart**:
+**`/` is local** (instant, works offline):
 
-- **Plain words** → an instant, case-insensitive **local search** over task content,
-  project, and labels. It filters *live* as you type. e.g. `groceries`, `call mom`.
-- **Filter expressions** → evaluated **locally** against the cache. Detected when your
-  query uses operators (`|`, `&`, `!`, `#`, `@`, `(` `)`) or keywords. Supported subset:
+- **Plain words** → case-insensitive search over task content, project, and labels,
+  filtering *live* as you type. e.g. `groceries`, `call mom`.
+- **Filter expressions** → evaluated against the cache. A useful subset:
   `today`, `overdue`, `no date`, `no deadline`, `deadline`, `recurring`, `@label`,
   `#project`, `p1`–`p4`, combined with `|`/`,` (or), `&` (and), `!` (not). e.g.
-  `today | overdue`, `#Personal & p1`, `@follow-up & !today`.
+  `today | overdue`, `#Personal & p1`.
 
-Press `Esc` to clear and return to all tasks.
+**`?` is online** — sends the query to Todoist and uses the **full filter grammar**
+server-side, so date/relative queries that the local evaluator doesn't handle work here:
+e.g. `last 7 days`, `next week`, `deadline before: +3 days`, `created before: -30 days`,
+`assigned to: me`. Requires a network connection. Press `Esc` to leave results.
+
+Press `Esc` (or `h`) to clear and return to all tasks.
+
+### Quick label views
+
+`o` (ongoing) and `f` (follow-up) show tasks carrying a label you choose in **Options**
+(`O`). Defaults: `@ongoing` and `@ffup`.
 
 ### Add syntax (natural language)
 

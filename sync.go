@@ -442,6 +442,54 @@ func DoSync(syncToken string, commands []Command) (*syncResponse, error) {
 	return &sr, nil
 }
 
+// FilterTasks runs a Todoist filter query server-side (full filter grammar) and
+// returns the matching items. Requires a network connection.
+func FilterTasks(query string) ([]apiItem, error) {
+	token, err := Token()
+	if err != nil {
+		return nil, err
+	}
+	var all []apiItem
+	cursor := ""
+	for {
+		u := "https://api.todoist.com/api/v1/tasks/filter?limit=100&query=" + url.QueryEscape(query)
+		if cursor != "" {
+			u += "&cursor=" + url.QueryEscape(cursor)
+		}
+		req, err := http.NewRequest("GET", u, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+		if err != nil {
+			return nil, err
+		}
+		data, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			msg := strings.TrimSpace(string(data))
+			if len(msg) > 160 {
+				msg = msg[:160]
+			}
+			return nil, fmt.Errorf("filter %d: %s", resp.StatusCode, msg)
+		}
+		var out struct {
+			Results    []apiItem `json:"results"`
+			NextCursor *string   `json:"next_cursor"`
+		}
+		if err := json.Unmarshal(data, &out); err != nil {
+			return nil, err
+		}
+		all = append(all, out.Results...)
+		if out.NextCursor == nil || *out.NextCursor == "" || len(all) >= 300 {
+			break
+		}
+		cursor = *out.NextCursor
+	}
+	return all, nil
+}
+
 // Merge applies a sync response into the cache (full or incremental) and removes
 // optimistic temp-id entries that now have real ids.
 func (c *Cache) Merge(sr *syncResponse) {

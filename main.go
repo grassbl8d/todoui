@@ -5,7 +5,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -184,7 +186,11 @@ const (
 	modeCommentAdd   // writing a new comment in the detail view
 	modePriorityPick // choosing a priority to filter by
 	modeOnboard      // first-run / invalid-token: prompt for the API token
+	modeOnboardLabel // first-run: choose the "ongoing" label
 	modeClearData    // confirm clearing token + cache + queue
+	modeOptions      // settings page
+	modeOptionsEdit  // editing one setting
+	modeOnlineSearch // online Todoist filter query (-)
 )
 
 // editField is which task field the detail editor is changing.
@@ -274,9 +280,16 @@ type model struct {
 	commentErr   string     // error from the last comment fetch/post
 	recentView   bool       // showing the recently-added tasks
 	recentIDs    []string   // task IDs in recently-added order
+	onlineView   bool       // showing online (server filter) search results
+	onlineResults []Task    // results of the last online search
+	onlineQuery  string     // last online query (for the header)
+	searching    bool       // online search in flight
 	onboardErr   string     // error shown on the onboarding screen
 	checking     bool       // validating the token
 	projQuery    string     // type-to-filter text in the project picker
+	settings     Settings   // user preferences (ongoing label, sync interval)
+	tickGen      int        // generation guard for the auto-sync ticker
+	optCursor    int        // selected row on the options page
 	helpOffset   int        // scroll offset of the help page
 	addProject   Project    // project chosen for the task currently being added
 	recents      []Project  // recently-chosen projects, most recent first (persisted)
@@ -300,6 +313,12 @@ type syncResultMsg struct {
 type tokenCheckedMsg struct {
 	valid   bool
 	authErr bool // token rejected (vs. just offline)
+}
+type autoSyncTickMsg struct{ gen int }
+type onlineResultMsg struct {
+	query string
+	items []apiItem
+	err   error
 }
 type errMsg struct{ err error }
 type actionMsg struct{ status string }
@@ -334,6 +353,7 @@ func initialModel() model {
 		cache:    c,
 		queue:    LoadQueue(),
 		recents:  LoadRecentProjects(),
+		settings: LoadSettings(),
 		status:   "ready",
 	}
 	m.deriveAll()
@@ -353,6 +373,16 @@ func (m *model) beginOnboard(msg string) {
 	m.input.Focus()
 }
 
+// beginLabelOnboard asks which label marks "ongoing" tasks (first run).
+func (m *model) beginLabelOnboard() {
+	m.mode = modeOnboardLabel
+	m.input.EchoMode = textinput.EchoNormal
+	m.input.Placeholder = "ongoing"
+	m.input.SetValue(m.settings.OngoingLabel)
+	m.input.CursorEnd()
+	m.input.Focus()
+}
+
 func (m model) Init() tea.Cmd {
 	if m.mode == modeOnboard {
 		return textinput.Blink // wait for the token
@@ -368,6 +398,22 @@ func checkTokenCmd() tea.Cmd {
 	}
 }
 
+// autoSyncCmd schedules the next background sync tick (no-op if interval is 0).
+func autoSyncCmd(gen, seconds int) tea.Cmd {
+	if seconds <= 0 {
+		return nil
+	}
+	return tea.Tick(time.Duration(seconds)*time.Second, func(time.Time) tea.Msg {
+		return autoSyncTickMsg{gen: gen}
+	})
+}
+
+// restartAutoSync invalidates outstanding ticks and starts a fresh one.
+func (m *model) restartAutoSync() tea.Cmd {
+	m.tickGen++
+	return autoSyncCmd(m.tickGen, m.settings.SyncSeconds)
+}
+
 // syncNowCmd flushes the queue and pulls updates in the background.
 func syncNowCmd(syncToken string, queue []Command) tea.Cmd {
 	sent := len(queue)
@@ -375,6 +421,23 @@ func syncNowCmd(syncToken string, queue []Command) tea.Cmd {
 		resp, err := DoSync(syncToken, queue)
 		return syncResultMsg{resp: resp, sent: sent, err: err}
 	}
+}
+
+func onlineSearchCmd(query string) tea.Cmd {
+	return func() tea.Msg {
+		items, err := FilterTasks(query)
+		return onlineResultMsg{query: query, items: items, err: err}
+	}
+}
+
+// projectByName finds a project by its display name (e.g. "#Bizlink API").
+func (m *model) projectByName(name string) (Project, bool) {
+	for _, p := range m.projects {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Project{}, false
 }
 
 // deriveAll rebuilds allTasks and the project list from the cache, then re-views.
@@ -552,6 +615,14 @@ func (m *model) selectedTask() (Task, bool) {
 // applyView rebuilds the visible list from allTasks, narrowed by the local
 // text query (case-insensitive substring over content, project and labels).
 func (m *model) applyView() {
+	if m.onlineView {
+		items := make([]list.Item, len(m.onlineResults))
+		for i, t := range m.onlineResults {
+			items[i] = taskItem{t}
+		}
+		m.list.SetItems(items)
+		return
+	}
 	if m.recentView {
 		byID := make(map[string]Task, len(m.allTasks))
 		for _, t := range m.allTasks {
@@ -641,6 +712,9 @@ func (m *model) sortTasks(ts []Task) {
 // scopeStatus describes the current view and its visible count.
 func (m *model) scopeStatus() string {
 	n := len(m.list.Items())
+	if m.onlineView {
+		return fmt.Sprintf("online: %s — %d", m.onlineQuery, n)
+	}
 	if m.recentView {
 		return fmt.Sprintf("recently added — %d", n)
 	}
@@ -667,6 +741,7 @@ func (m *model) scopeStatus() string {
 // from the server only when the needed server filter differs from what's loaded.
 func (m *model) applyState(s viewState) tea.Cmd {
 	m.recentView = false // any committed view leaves the recently-added view
+	m.onlineView = false // …and the online-search view
 	m.filter, m.textQuery, m.projectView, m.priorityView = s.filter, s.textQuery, s.projectView, s.priorityView
 	m.applyView() // everything is local now
 	m.status = m.scopeStatus()
@@ -746,16 +821,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case msg.valid:
 			m.online = true
-			wasOnboard := m.mode == modeOnboard
-			if wasOnboard {
+			m.status = "token OK — syncing…"
+			m.syncing = true
+			cmds := []tea.Cmd{syncNowCmd(m.cache.SyncToken, m.queue), m.restartAutoSync()}
+			if m.mode == modeOnboard && !SettingsExist() {
+				// first run: ask which label means "ongoing"
+				m.beginLabelOnboard()
+				cmds = append(cmds, textinput.Blink)
+				return m, tea.Batch(cmds...)
+			}
+			if m.mode == modeOnboard {
 				m.mode = modeList
 				m.input.EchoMode = textinput.EchoNormal
 				m.input.Blur()
 				m.onboardErr = ""
 			}
-			m.status = "token OK — syncing…"
-			m.syncing = true
-			return m, syncNowCmd(m.cache.SyncToken, m.queue)
+			return m, tea.Batch(cmds...)
 		case msg.authErr:
 			// token rejected → (re)onboard
 			m.beginOnboard("That token was rejected. Paste a valid Todoist API token.")
@@ -775,6 +856,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+
+	case onlineResultMsg:
+		m.searching = false
+		if msg.err != nil {
+			m.err = "online search failed: " + msg.err.Error()
+			return m, nil
+		}
+		m.err = ""
+		m.onlineView = true
+		m.onlineQuery = msg.query
+		m.onlineResults = make([]Task, len(msg.items))
+		for i, it := range msg.items {
+			m.onlineResults[i] = m.cache.toTask(it)
+		}
+		m.applyView()
+		m.status = fmt.Sprintf("online: %s — %d", msg.query, len(m.onlineResults))
+		return m, nil
+
+	case autoSyncTickMsg:
+		if msg.gen != m.tickGen || m.settings.SyncSeconds <= 0 {
+			return m, nil // stale or disabled
+		}
+		cmds := []tea.Cmd{autoSyncCmd(m.tickGen, m.settings.SyncSeconds)} // reschedule
+		if !m.syncing && HasToken() {
+			m.syncing = true
+			m.status = "auto-syncing…"
+			cmds = append(cmds, syncNowCmd(m.cache.SyncToken, m.queue))
+		}
+		return m, tea.Batch(cmds...)
 
 	case syncResultMsg:
 		m.syncing = false
@@ -831,8 +941,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePriorityPick(msg)
 		case modeOnboard:
 			return m.updateOnboard(msg)
+		case modeOnboardLabel:
+			return m.updateOnboardLabel(msg)
 		case modeClearData:
 			return m.updateClearData(msg)
+		case modeOptions:
+			return m.updateOptions(msg)
+		case modeOptionsEdit:
+			return m.updateOptionsEdit(msg)
+		case modeOnlineSearch:
+			return m.updateOnlineSearch(msg)
 		}
 	}
 
@@ -847,7 +965,20 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "a":
-		// Open the project picker, pre-selecting the last-used project.
+		// If already viewing a project, add straight into it.
+		if m.projectView != "" {
+			if p, ok := m.projectByName(m.projectView); ok {
+				m.addProject = p
+				m.mode = modeAdd
+				m.err = ""
+				m.input.EchoMode = textinput.EchoNormal
+				m.input.Placeholder = "Buy milk @errand tomorrow 9am p1"
+				m.input.SetValue("")
+				m.input.Focus()
+				return m, textinput.Blink
+			}
+		}
+		// Otherwise open the project picker, pre-selecting the last-used project.
 		m.mode = modeProjectPick
 		m.pickIntent = pickAdd
 		m.err = ""
@@ -911,8 +1042,37 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "o":
-		// Ongoing — show all tasks tagged @ongoing.
-		return m, m.commit(viewState{filter: "@ongoing"})
+		// Ongoing — show all tasks tagged with the configured label.
+		return m, m.commit(viewState{filter: "@" + m.settings.OngoingLabel})
+	case "f":
+		// Follow-up — show all tasks tagged with the configured label.
+		return m, m.commit(viewState{filter: "@" + m.settings.FollowupLabel})
+	case "T":
+		// Tasks due today and earlier (today + overdue).
+		return m, m.commit(viewState{filter: "today | overdue"})
+	case "?":
+		// Online search using Todoist's full filter grammar.
+		m.mode = modeOnlineSearch
+		m.err = ""
+		m.input.EchoMode = textinput.EchoNormal
+		m.input.Placeholder = "today · last 7 days · deadline before: +3 days · overdue & p1"
+		m.input.SetValue(m.onlineQuery)
+		m.input.CursorEnd()
+		m.input.Focus()
+		return m, textinput.Blink
+	case "O":
+		m.mode = modeOptions
+		m.optCursor = 0
+		m.err = ""
+		return m, nil
+	case "n":
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+		return m, cmd
+	case "v":
+		var cmd tea.Cmd
+		m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+		return m, cmd
 	case "R":
 		// Recently added — last 10 tasks by added date (from cache).
 		m.recentView = true
@@ -933,11 +1093,17 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
-	case "d":
+	case "x":
 		if _, ok := m.selectedTask(); ok {
 			m.mode = modeConfirm
 			return m, nil
 		}
+	case "d":
+		// Deadline is today.
+		return m, m.commit(viewState{filter: "deadline today"})
+	case "D":
+		// Deadline is today or earlier.
+		return m, m.commit(viewState{filter: "deadline overdue"})
 	case "r":
 		// Refresh the local view from the cache.
 		m.deriveAll()
@@ -956,7 +1122,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "h", "esc":
 		// Home — back to the all-projects / all-tasks view (undoable with b).
 		return m, m.commit(viewState{})
-	case "H", "?":
+	case "H":
 		m.mode = modeHelp
 		m.helpOffset = 0
 		return m, nil
@@ -993,6 +1159,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // setSort applies a sort mode; pressing the same mode again flips direction.
 func (m *model) setSort(s sortMode) {
 	m.recentView = false // sorting leaves the recently-added view
+	m.onlineView = false
 	if s != sortNone && m.sortMode == s {
 		m.sortDesc = !m.sortDesc
 	} else {
@@ -1338,6 +1505,145 @@ func (m model) updateClearData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m model) updateOnlineSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = modeList
+		m.input.Blur()
+		return m, nil
+	case "enter":
+		q := strings.TrimSpace(m.input.Value())
+		m.mode = modeList
+		m.input.Blur()
+		if q == "" {
+			return m, nil
+		}
+		m.searching = true
+		m.status = "searching Todoist…"
+		return m, onlineSearchCmd(q)
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+func (m model) updateOnboardLabel(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "enter", "esc":
+		label := strings.TrimPrefix(strings.TrimSpace(m.input.Value()), "@")
+		if label == "" {
+			label = "ongoing"
+		}
+		m.settings.OngoingLabel = label
+		m.settings.Save() // writes the file → marks first-run complete
+		m.mode = modeList
+		m.input.Blur()
+		m.status = "ready — ongoing label: @" + label
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
+// optionRows describes the editable settings, in display order.
+func (m model) optionRows() []struct{ label, value string } {
+	sync := "off"
+	if m.settings.SyncSeconds > 0 {
+		sync = fmt.Sprintf("%d seconds", m.settings.SyncSeconds)
+	}
+	return []struct{ label, value string }{
+		{"Ongoing label", "@" + m.settings.OngoingLabel},
+		{"Follow-up label", "@" + m.settings.FollowupLabel},
+		{"Background auto-sync", sync},
+	}
+}
+
+func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	rows := m.optionRows()
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "q", "O":
+		m.mode = modeList
+		return m, nil
+	case "up", "k":
+		if m.optCursor > 0 {
+			m.optCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.optCursor < len(rows)-1 {
+			m.optCursor++
+		}
+		return m, nil
+	case "enter":
+		m.mode = modeOptionsEdit
+		m.input.EchoMode = textinput.EchoNormal
+		switch m.optCursor {
+		case 0:
+			m.input.Placeholder = "ongoing"
+			m.input.SetValue(m.settings.OngoingLabel)
+		case 1:
+			m.input.Placeholder = "ffup"
+			m.input.SetValue(m.settings.FollowupLabel)
+		case 2:
+			m.input.Placeholder = "seconds (0 = off)"
+			m.input.SetValue(strconv.Itoa(m.settings.SyncSeconds))
+		}
+		m.input.CursorEnd()
+		m.input.Focus()
+		return m, textinput.Blink
+	}
+	return m, nil
+}
+
+func (m model) updateOptionsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.mode = modeOptions
+		m.input.Blur()
+		return m, nil
+	case "enter":
+		val := strings.TrimSpace(m.input.Value())
+		var restart tea.Cmd
+		switch m.optCursor {
+		case 0:
+			label := strings.TrimPrefix(val, "@")
+			if label == "" {
+				label = "ongoing"
+			}
+			m.settings.OngoingLabel = label
+		case 1:
+			label := strings.TrimPrefix(val, "@")
+			if label == "" {
+				label = "ffup"
+			}
+			m.settings.FollowupLabel = label
+		case 2:
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 0 {
+				n = 0
+			}
+			if n > 0 && n < 30 {
+				n = 30 // avoid hammering the API
+			}
+			m.settings.SyncSeconds = n
+			restart = m.restartAutoSync()
+		}
+		m.settings.Save()
+		m.mode = modeOptions
+		m.input.Blur()
+		m.status = "settings saved"
+		return m, restart
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
 func (m model) updateOnboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc":
@@ -1385,7 +1691,9 @@ func (m model) View() string {
 
 	title := titleBarStyle.Render("✓ Todoist")
 	scope := "  all tasks"
-	if m.recentView {
+	if m.onlineView {
+		scope = "  online: " + m.onlineQuery
+	} else if m.recentView {
 		scope = "  recently added"
 	} else if m.filter != "" {
 		scope = "  filter: " + m.filter
@@ -1415,6 +1723,28 @@ func (m model) View() string {
 
 	if m.mode == modeOnboard {
 		return m.onboardView(header)
+	}
+
+	if m.mode == modeOnboardLabel {
+		dim := lipgloss.NewStyle().Foreground(subColor)
+		accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+		box := promptBox.Render(accent.Render("Ongoing label  @") + m.input.View())
+		body := lipgloss.JoinVertical(lipgloss.Left,
+			"",
+			"  "+accent.Render("One more thing…"),
+			"",
+			"  "+dim.Render("Which label marks a task as “ongoing”? The o key will"),
+			"  "+dim.Render("show every task with this label. Default: ongoing."),
+			"",
+			"  "+box,
+			"",
+			helpStyle.Render("  enter save · (you can change this later in Options)"),
+		)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body)
+	}
+
+	if m.mode == modeOptions || m.mode == modeOptionsEdit {
+		return m.optionsView(header)
 	}
 
 	if m.mode == modeHelp {
@@ -1509,6 +1839,9 @@ func (m model) View() string {
 	case modeSearch:
 		label := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Search  ")
 		body = promptBox.Render(label + m.input.View())
+	case modeOnlineSearch:
+		label := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Todoist search (online)  ")
+		body = promptBox.Render(label + m.input.View())
 	}
 
 	footer := m.footer()
@@ -1523,6 +1856,37 @@ func (m model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, body, m.list.View(), footer)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, m.list.View(), footer)
+}
+
+// optionsView renders the settings page.
+func (m model) optionsView(header string) string {
+	accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(subColor)
+	val := lipgloss.NewStyle().Foreground(lipgloss.Color("#8AB4F8"))
+	rows := m.optionRows()
+
+	lines := []string{"", "  " + accent.Render("Options"), ""}
+	for i, r := range rows {
+		cur := "   "
+		name := dim.Render(fmt.Sprintf("%-22s", r.label))
+		if i == m.optCursor && m.mode == modeOptions {
+			cur = accent.Render(" ▸ ")
+			name = lipgloss.NewStyle().Foreground(lipgloss.Color("#FFFFFF")).Bold(true).Render(fmt.Sprintf("%-22s", r.label))
+		}
+		lines = append(lines, cur+name+val.Render(r.value))
+	}
+	lines = append(lines, "")
+
+	if m.mode == modeOptionsEdit {
+		titles := []string{"Ongoing label  @", "Follow-up label  @", "Auto-sync seconds (0 = off)  "}
+		box := promptBox.Render(accent.Render(titles[m.optCursor]) + m.input.View())
+		lines = append(lines, "  "+box, "", helpStyle.Render("  enter save · esc cancel"))
+	} else {
+		lines = append(lines, dim.Render("  The ongoing label is what the o key filters on."))
+		lines = append(lines, dim.Render("  Auto-sync pushes queued changes & pulls on a timer."))
+		lines = append(lines, "", helpStyle.Render("  ↑/↓ move · enter edit · esc/O close"))
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, lines...)...)
 }
 
 // onboardView renders the first-run / invalid-token token entry screen.
@@ -1653,23 +2017,24 @@ func helpLines() []string {
 		"",
 		head.Render("  Navigation"),
 		row("↑/↓ j/k", "Move selection"),
-		row("pgup/pgdn", "Page through the list"),
+		row("n / v", "Next page / previous page (also pgdn/pgup)"),
 		row("b", "Back — return to the previous view (like a browser)"),
 		row("h / esc", "Home — back to all tasks / all projects"),
 		row("q ctrl+c", "Quit"),
 		"",
 		head.Render("  Tasks"),
-		row("enter", "Open the task — view & edit date, priority, labels, name"),
+		row("enter", "Open the task — view & edit due, deadline, priority, labels, name"),
 		row("a", "Add a task — choose the project first"),
-		row("A", "Add a task straight to the last-used project"),
+		row("A", "Add a task straight to the most recent project"),
 		row("c", "Complete the selected task"),
-		row("d", "Delete the selected task (asks y/n)"),
+		row("x", "Delete the selected task (asks first)"),
 		row("r", "Refresh the view from the local cache"),
 		row("s", "Sync — push queued changes & pull updates"),
 		"",
-		head.Render("  Offline"),
+		head.Render("  Offline & settings"),
 		row("", "Changes apply instantly to a local cache and queue up."),
 		row("", "Press s to push them; everything works offline until then."),
+		row("O", "Options — ongoing label & background-sync interval"),
 		row("X", "Clear data — remove token, cache & queue (asks first)"),
 		"",
 		head.Render("  In the task view"),
@@ -1678,12 +2043,17 @@ func helpLines() []string {
 		row("m", "Add a comment (view existing comments above)"),
 		row("c", "Complete    b/esc  back to the list"),
 		"",
-		head.Render("  Views"),
+		head.Render("  Views & filters"),
 		row("p", "View by project (pick from the list; “↩ All Projects” to reset)"),
 		row("P", "Filter by priority (pick p1–p4 from the menu)"),
-		row("o", "Ongoing — show all tasks tagged @ongoing"),
+		row("o", "Ongoing — tasks with your ongoing label (set in Options)"),
+		row("f", "Follow-up — tasks with your follow-up label (set in Options)"),
+		row("T", "Due today or earlier (today + overdue)"),
+		row("d", "Deadline is today"),
+		row("D", "Deadline is today or earlier"),
 		row("R", "Recently added — the last 10 tasks you created"),
 		row("/", "Search — plain words; or a local filter (today, #x & p1)"),
+		row("?", "Online search — full Todoist filter grammar (needs network)"),
 		"",
 		head.Render("  Sort  (press the same number again to reverse)"),
 		row("1", "Priority (p1 → p4)"),
@@ -1810,7 +2180,7 @@ func (m model) footer() string {
 		statusLine = errStyle.Render("⚠ " + m.err)
 	}
 
-	keys := "a add · p project · P priority · o ongoing · R recent · / search · 1-6 sort · enter view · c done · s sync · X clear · H help · q quit"
+	keys := "a add · enter view · c done · x del · / find · ? online · p project · T today · o ongoing · f follow-up · O options · s sync · H help · q quit"
 	right := helpStyle.Render(keys)
 	gap := m.width - lipgloss.Width(statusLine) - lipgloss.Width(right)
 	if gap < 1 {

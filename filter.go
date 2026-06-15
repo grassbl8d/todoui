@@ -109,6 +109,10 @@ func matchAtom(atom string, t Task, today string) bool {
 		return t.Deadline == ""
 	case "deadline":
 		return t.Deadline != ""
+	case "deadline today":
+		return t.Deadline == today
+	case "deadline overdue", "deadline past", "deadline due":
+		return t.Deadline != "" && t.Deadline <= today
 	case "recurring":
 		return t.Recurring
 	case "p1", "p2", "p3", "p4":

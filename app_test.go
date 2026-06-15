@@ -466,6 +466,88 @@ func TestClearDataDialogCancel(t *testing.T) {
 	}
 }
 
+func TestAddWhileViewingProjectSkipsPicker(t *testing.T) {
+	m := initialModel()
+	m.recents = nil
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	m.projList.SetSize(100, 36)
+	nm, _ := m.Update(projectsLoadedMsg{projects: []Project{{ID: "b", Name: "#Bizlink API"}}})
+	m = nm.(model)
+	nm, _ = m.Update(tasksLoadedMsg{tasks: []Task{{ID: "1", Project: "#Bizlink API", Content: "x"}}})
+	m = nm.(model)
+	// view the project
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	m = nm.(model)
+	selectProjItem(&m, "#Bizlink API")
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if m.projectView != "#Bizlink API" {
+		t.Fatalf("expected to be viewing #Bizlink API, got %q", m.projectView)
+	}
+	// press a → should go straight to add (no picker) with the project preset
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")})
+	m = nm.(model)
+	if m.mode != modeAdd {
+		t.Fatalf("add while viewing a project should skip the picker, mode=%v", m.mode)
+	}
+	if m.addProject.ID != "b" {
+		t.Fatalf("add should target the viewed project, got %q", m.addProject.ID)
+	}
+}
+
+func TestOnlineSearchResults(t *testing.T) {
+	m := initialModel()
+	m.cache = newCache()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	// open online search
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("?")})
+	m = nm.(model)
+	if m.mode != modeOnlineSearch {
+		t.Fatal("'?' should open online search")
+	}
+	m.mode = modeList // enter would have returned to the list before results arrive
+	// deliver results (as if the API returned them)
+	nm, _ = m.Update(onlineResultMsg{query: "today", items: []apiItem{
+		{ID: "1", Content: "due today", Priority: 1},
+		{ID: "2", Content: "also today", Priority: 1},
+	}})
+	m = nm.(model)
+	if !m.onlineView {
+		t.Fatal("results should switch to the online view")
+	}
+	if got := len(m.list.Items()); got != 2 {
+		t.Fatalf("want 2 online results, got %d", got)
+	}
+	// home leaves the online view
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	if nm.(model).onlineView {
+		t.Fatal("home should leave the online view")
+	}
+}
+
+func TestOptionsPageOpens(t *testing.T) {
+	m := initialModel()
+	m.width, m.height = 100, 40
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	m = nm.(model)
+	if m.mode != modeOptions {
+		t.Fatal("O should open the options page")
+	}
+	if !strings.Contains(m.View(), "Options") {
+		t.Fatal("options page should render")
+	}
+	// down then enter starts editing the auto-sync field
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	m = nm.(model)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if m.mode != modeOptionsEdit || m.optCursor != 1 {
+		t.Fatal("enter on the 2nd row should edit the auto-sync interval")
+	}
+}
+
 func TestTokenCheckedValidLeavesOnboard(t *testing.T) {
 	m := initialModel()
 	m.cache = newCache()
@@ -473,8 +555,9 @@ func TestTokenCheckedValidLeavesOnboard(t *testing.T) {
 	m.mode = modeOnboard
 	nm, cmd := m.Update(tokenCheckedMsg{valid: true})
 	mm := nm.(model)
-	if mm.mode != modeList {
-		t.Fatal("valid token should leave onboarding for the list")
+	// leaves the token prompt — either to the list or the first-run label step
+	if mm.mode == modeOnboard {
+		t.Fatal("valid token should leave the token onboarding screen")
 	}
 	if !mm.online {
 		t.Fatal("valid token should mark online")
@@ -682,16 +765,53 @@ func TestDeleteConfirmFlow(t *testing.T) {
 	m.list.SetSize(100, 36)
 	nm, _ := m.Update(tasksLoadedMsg{tasks: sampleTasks()})
 	m = nm.(model)
-	// press d -> confirm mode
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	// press x -> confirm mode
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	m = nm.(model)
 	if m.mode != modeConfirm {
-		t.Fatal("d should open confirm")
+		t.Fatal("x should open the delete confirm")
 	}
 	// press n -> cancel back to list
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if nm.(model).mode != modeList {
 		t.Fatal("n should cancel delete")
+	}
+}
+
+func TestDeadlineAndTodayFilters(t *testing.T) {
+	today := todayStr()
+	m := initialModel()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	nm, _ := m.Update(tasksLoadedMsg{tasks: []Task{
+		{ID: "1", Content: "due today", DueDate: today},
+		{ID: "2", Content: "overdue", DueDate: "2020-01-01"},
+		{ID: "3", Content: "deadline today", Deadline: today},
+		{ID: "4", Content: "deadline past", Deadline: "2020-01-01"},
+		{ID: "5", Content: "no dates"},
+	}})
+	m = nm.(model)
+	// T → due today or overdue (tasks 1,2)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("T")})
+	m = nm.(model)
+	if got := len(m.list.Items()); got != 2 {
+		t.Fatalf("T should show 2 due/overdue tasks, got %d", got)
+	}
+	// d → deadline today (task 3)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")}) // home first
+	m = nm.(model)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
+	m = nm.(model)
+	if got := len(m.list.Items()); got != 1 {
+		t.Fatalf("d should show 1 deadline-today task, got %d", got)
+	}
+	// D → deadline today or earlier (tasks 3,4)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	m = nm.(model)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
+	m = nm.(model)
+	if got := len(m.list.Items()); got != 2 {
+		t.Fatalf("D should show 2 deadline-due tasks, got %d", got)
 	}
 }
 
