@@ -217,6 +217,7 @@ type model struct {
 	detailTask   Task       // task shown in the detail view
 	detailID     string     // id of the task in the detail view
 	editField    editField  // which field the detail editor is editing
+	helpOffset   int        // scroll offset of the help page
 	addProject  Project    // project chosen for the task currently being added
 	lastProject Project // most recently used project (remembered across runs)
 	status      string
@@ -612,11 +613,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case modeProjectPick:
 			return m.updateProjectPick(msg)
 		case modeHelp:
-			if msg.String() == "ctrl+c" {
-				return m, tea.Quit
-			}
-			m.mode = modeList // any other key closes help
-			return m, nil
+			return m.updateHelp(msg)
 		case modeDetail:
 			return m.updateDetail(msg)
 		case modeDetailEdit:
@@ -727,6 +724,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.commit(viewState{})
 	case "H", "?":
 		m.mode = modeHelp
+		m.helpOffset = 0
 		return m, nil
 	case "1":
 		m.setSort(sortPriority)
@@ -1192,8 +1190,8 @@ func (m model) detailView() string {
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 
-// helpView renders the full-screen help page (opened with H or ?).
-func (m model) helpView() string {
+// helpLines returns the full help content as individual lines (for scrolling).
+func helpLines() []string {
 	key := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
 	head := lipgloss.NewStyle().Foreground(lipgloss.Color("#8AB4F8")).Bold(true)
 	dim := lipgloss.NewStyle().Foreground(subColor)
@@ -1202,7 +1200,7 @@ func (m model) helpView() string {
 		return "  " + key.Render(fmt.Sprintf("%-12s", k)) + dim.Render(desc)
 	}
 
-	lines := []string{
+	return []string{
 		"",
 		head.Render("  Navigation"),
 		row("↑/↓ j/k", "Move selection"),
@@ -1248,9 +1246,90 @@ func (m model) helpView() string {
 		dim.Render("              dates, @labels and p1–p4 are parsed by Todoist;"),
 		dim.Render("              the project comes from the picker."),
 		"",
-		dim.Render("  Press any key to close this help."),
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// helpViewport is how many help lines fit on screen (excludes header + footer).
+func (m model) helpViewport() int {
+	v := m.height - 2
+	if v < 1 {
+		v = 1
+	}
+	return v
+}
+
+func (m model) maxHelpOffset() int {
+	max := len(helpLines()) - m.helpViewport()
+	if max < 0 {
+		return 0
+	}
+	return max
+}
+
+// helpView renders the scrollable help page (opened with H or ?).
+func (m model) helpView() string {
+	lines := helpLines()
+	vp := m.helpViewport()
+	off := m.helpOffset
+	if off > m.maxHelpOffset() {
+		off = m.maxHelpOffset()
+	}
+	end := off + vp
+	if end > len(lines) {
+		end = len(lines)
+	}
+	window := lines[off:end]
+
+	pos := "all"
+	if m.maxHelpOffset() > 0 {
+		if off == 0 {
+			pos = "top"
+		} else if off >= m.maxHelpOffset() {
+			pos = "end"
+		} else {
+			pos = fmt.Sprintf("%d%%", off*100/m.maxHelpOffset())
+		}
+	}
+	hint := helpStyle.Render(fmt.Sprintf("  j/k ↑/↓ scroll · %s · any other key closes", pos))
+
+	return lipgloss.JoinVertical(lipgloss.Left, append(window, hint)...)
+}
+
+func (m model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		if m.helpOffset < m.maxHelpOffset() {
+			m.helpOffset++
+		}
+		return m, nil
+	case "k", "up":
+		if m.helpOffset > 0 {
+			m.helpOffset--
+		}
+		return m, nil
+	case "pgdown", "ctrl+d", "f", " ":
+		m.helpOffset += m.helpViewport() - 1
+		if m.helpOffset > m.maxHelpOffset() {
+			m.helpOffset = m.maxHelpOffset()
+		}
+		return m, nil
+	case "pgup", "ctrl+u":
+		m.helpOffset -= m.helpViewport() - 1
+		if m.helpOffset < 0 {
+			m.helpOffset = 0
+		}
+		return m, nil
+	case "g", "home":
+		m.helpOffset = 0
+		return m, nil
+	case "G", "end":
+		m.helpOffset = m.maxHelpOffset()
+		return m, nil
+	}
+	m.mode = modeList // any other key closes help
+	return m, nil
 }
 
 func (m model) footer() string {

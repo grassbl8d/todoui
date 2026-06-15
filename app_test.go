@@ -353,10 +353,43 @@ func TestHelpPageToggle(t *testing.T) {
 	if !strings.Contains(m.View(), "Navigation") {
 		t.Fatal("help view should render its sections")
 	}
-	// any key closes
+	// any non-scroll key closes
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})
 	if nm.(model).mode != modeList {
 		t.Fatal("any key should close help")
+	}
+}
+
+func TestHelpScrolling(t *testing.T) {
+	m := initialModel()
+	m.width, m.height = 80, 12 // short terminal → content overflows
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("H")})
+	m = nm.(model)
+	if m.maxHelpOffset() <= 0 {
+		t.Fatal("with a short terminal the help should be scrollable")
+	}
+	// j scrolls down without closing
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = nm.(model)
+	if m.mode != modeHelp || m.helpOffset != 1 {
+		t.Fatalf("j should scroll, not close (mode=%v offset=%d)", m.mode, m.helpOffset)
+	}
+	// k scrolls back up
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")})
+	m = nm.(model)
+	if m.helpOffset != 0 {
+		t.Fatalf("k should scroll up, offset=%d", m.helpOffset)
+	}
+	// G jumps to end
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("G")})
+	m = nm.(model)
+	if m.helpOffset != m.maxHelpOffset() {
+		t.Fatal("G should jump to end")
+	}
+	// a real key (e.g. q) closes
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if nm.(model).mode != modeList {
+		t.Fatal("q should close help")
 	}
 }
 
