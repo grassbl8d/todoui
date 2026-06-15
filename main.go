@@ -726,6 +726,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.list.SetSize(msg.Width, msg.Height-4)
 		m.projList.SetSize(msg.Width, msg.Height-4)
+		m.input.Width = max(20, msg.Width-28) // visible typing width inside prompt boxes
 		return m, nil
 
 	case projectsLoadedMsg: // test seam
@@ -1424,6 +1425,43 @@ func (m model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.detailView())
 	}
 
+	// Confirmation dialogs render as their own modal screen (no list behind).
+	if m.mode == modeConfirm {
+		t, _ := m.selectedTask()
+		name := t.Content
+		if len(name) > 60 {
+			name = name[:59] + "…"
+		}
+		accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+		dim := lipgloss.NewStyle().Foreground(subColor)
+		box := promptBox.Render(lipgloss.JoinVertical(lipgloss.Left,
+			accent.Render("Delete this task?"),
+			dim.Render("\""+name+"\" — this can't be undone."),
+			"",
+			accent.Render("y")+dim.Render(" delete    ")+accent.Render("n")+dim.Render(" cancel"),
+		))
+		return lipgloss.JoinVertical(lipgloss.Left, header, "", "  "+box)
+	}
+	if m.mode == modeClearData {
+		accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+		dim := lipgloss.NewStyle().Foreground(subColor)
+		rows := []string{
+			accent.Render("Clear all local data?"),
+			dim.Render("This signs todoui out and wipes its local state:"),
+			dim.Render("  • your saved Todoist API token"),
+			dim.Render("  • the offline cache (tasks, projects, comments)"),
+			dim.Render("  • any changes not yet synced"),
+			dim.Render("You'll be asked for your token again to reconnect."),
+		}
+		if n := len(m.queue); n > 0 {
+			rows = append(rows, "", lipgloss.NewStyle().Foreground(lipgloss.Color("#EB8909")).
+				Render(fmt.Sprintf("⚠ %d unsynced change(s) will be LOST — press n, then s to sync first.", n)))
+		}
+		rows = append(rows, "", accent.Render("y")+dim.Render(" clear everything    ")+accent.Render("n")+dim.Render(" cancel"))
+		box := promptBox.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
+		return lipgloss.JoinVertical(lipgloss.Left, header, "", "  "+box)
+	}
+
 	if m.mode == modePriorityPick {
 		hint := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Filter by priority")
 		var rows []string
@@ -1467,34 +1505,24 @@ func (m model) View() string {
 		}
 		label := lipgloss.NewStyle().Foreground(brandRed).Bold(true).
 			Render("Add → " + proj + "  ")
-		body = promptBox.Width(m.width - 4).Render(label + m.input.View())
+		body = promptBox.Render(label + m.input.View())
 	case modeSearch:
-		label := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Search    ")
-		body = promptBox.Width(m.width - 4).Render(label + m.input.View())
-	case modeConfirm:
-		t, _ := m.selectedTask()
-		q := lipgloss.NewStyle().Foreground(brandRed).Bold(true).
-			Render(fmt.Sprintf("Delete \"%s\"?  (y/n)", t.Content))
-		body = promptBox.Width(m.width - 4).Render(q)
-	case modeClearData:
-		q := lipgloss.NewStyle().Foreground(brandRed).Bold(true).
-			Render("Clear all local data — token, cache & queued changes?  (y/n)")
-		warn := ""
-		if n := len(m.queue); n > 0 {
-			warn = lipgloss.NewStyle().Foreground(lipgloss.Color("#EB8909")).
-				Render(fmt.Sprintf("  ⚠ %d unsynced change(s) will be lost — sync first to keep them.", n))
-		}
-		body = promptBox.Width(m.width - 4).Render(q + warn)
+		label := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Search  ")
+		body = promptBox.Render(label + m.input.View())
 	}
-
-	listView := m.list.View()
 
 	footer := m.footer()
 
 	if body != "" {
-		return lipgloss.JoinVertical(lipgloss.Left, header, body, listView, footer)
+		// Shrink the list so the prompt box doesn't push content off the top.
+		h := m.height - lipgloss.Height(header) - lipgloss.Height(body) - lipgloss.Height(footer)
+		if h < 3 {
+			h = 3
+		}
+		m.list.SetHeight(h)
+		return lipgloss.JoinVertical(lipgloss.Left, header, body, m.list.View(), footer)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, header, listView, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, m.list.View(), footer)
 }
 
 // onboardView renders the first-run / invalid-token token entry screen.
@@ -1587,11 +1615,11 @@ func (m model) detailView() string {
 			efContent:  "Edit name",
 		}
 		prompt := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(titles[m.editField] + "  ")
-		box := promptBox.Width(m.width - 4).Render(prompt + m.input.View())
+		box := promptBox.Render(prompt + m.input.View())
 		lines = append(lines, box, "", helpStyle.Render("  enter save · esc cancel"))
 	} else if m.mode == modeCommentAdd {
 		prompt := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("New comment  ")
-		box := promptBox.Width(m.width - 4).Render(prompt + m.input.View())
+		box := promptBox.Render(prompt + m.input.View())
 		lines = append(lines, box, "", helpStyle.Render("  enter post · esc cancel"))
 	} else {
 		actions := "  " +

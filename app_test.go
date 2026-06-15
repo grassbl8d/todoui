@@ -456,6 +456,10 @@ func TestClearDataDialogCancel(t *testing.T) {
 	if m.mode != modeClearData {
 		t.Fatal("X should open the clear-data confirmation")
 	}
+	view := m.View()
+	if !strings.Contains(view, "Clear all local data?") || !strings.Contains(view, "clear everything") {
+		t.Fatal("clear-data dialog should render its question and prompt")
+	}
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
 	if nm.(model).mode != modeList {
 		t.Fatal("n should cancel and return to the list")
