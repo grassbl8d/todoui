@@ -2518,6 +2518,13 @@ func (m model) footer() string {
 	if m.online {
 		badges = append(badges, lipgloss.NewStyle().Foreground(labelColor).Render("online"))
 	}
+	// Always-visible theme indicator + how to toggle it.
+	themeName := "dark"
+	if m.settings.Light {
+		themeName = "light"
+	}
+	badges = append(badges, lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("*")+
+		lipgloss.NewStyle().Foreground(subColor).Render(" "+themeName))
 	statusLine := statusStyle.Render(st)
 	if len(badges) > 0 {
 		statusLine = statusStyle.Render(st+"  ") + strings.Join(badges, statusStyle.Render(" · "))
