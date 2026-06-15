@@ -7,28 +7,88 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestParseCSV(t *testing.T) {
-	csv := "ID,Priority,DueDate,Project,Labels,Content\n" +
-		"abc123,p1,25/06/05(Thu) 09:00,#Bills Payments,@bills-payment,Pay Globe\n" +
-		"def456,p4,,#Personal,,Read a book\n"
-	rows, err := parseCSV(csv)
-	if err != nil {
-		t.Fatal(err)
+func TestToTaskPriorityInversion(t *testing.T) {
+	c := newCache()
+	c.Projects["pr"] = apiProject{ID: "pr", Name: "Bills"}
+	// API priority 4 = highest = display p1; API 1 = display p4
+	hi := c.toTask(apiItem{ID: "1", Content: "urgent", Priority: 4, ProjectID: "pr", Labels: []string{"x"}})
+	lo := c.toTask(apiItem{ID: "2", Content: "normal", Priority: 1})
+	if hi.Priority != "p1" {
+		t.Fatalf("API priority 4 should map to p1, got %s", hi.Priority)
 	}
-	if len(rows) != 2 {
-		t.Fatalf("want 2 rows, got %d", len(rows))
+	if lo.Priority != "p4" {
+		t.Fatalf("API priority 1 should map to p4, got %s", lo.Priority)
 	}
-	if rows[0][0] != "abc123" || rows[0][5] != "Pay Globe" {
-		t.Fatalf("bad row0: %#v", rows[0])
+	if hi.Project != "#Bills" {
+		t.Fatalf("project = %q", hi.Project)
 	}
-	if rows[1][4] != "" || rows[1][5] != "Read a book" {
-		t.Fatalf("bad row1: %#v", rows[1])
+	if hi.Labels != "@x" {
+		t.Fatalf("labels = %q", hi.Labels)
+	}
+}
+
+func TestToTaskDeadline(t *testing.T) {
+	c := newCache()
+	got := c.toTask(apiItem{ID: "1", Content: "x", Priority: 1, Deadline: &apiDeadline{Date: "2026-12-31"}})
+	if got.Deadline != "2026-12-31" {
+		t.Fatalf("deadline = %q", got.Deadline)
+	}
+}
+
+func TestEvalFilterSubset(t *testing.T) {
+	today := "2026-06-15"
+	due := func(d string) Task { return Task{DueDate: d} }
+	cases := []struct {
+		expr string
+		task Task
+		want bool
+	}{
+		{"today", due("2026-06-15 09:00"), true},
+		{"today", due("2026-06-16"), false},
+		{"overdue", due("2026-06-10"), true},
+		{"overdue", due("2026-06-20"), false},
+		{"no date", due(""), true},
+		{"no date", due("2026-06-15"), false},
+		{"p1", Task{Priority: "p1"}, true},
+		{"p1", Task{Priority: "p4"}, false},
+		{"@ongoing", Task{Labels: "@ongoing @x"}, true},
+		{"@ongoing", Task{Labels: "@x"}, false},
+		{"today | overdue", due("2026-06-10"), true},
+		{"recurring & p1", Task{Recurring: true, Priority: "p1"}, true},
+		{"recurring & p1", Task{Recurring: false, Priority: "p1"}, false},
+		{"!today", due("2026-06-16"), true},
+	}
+	for _, c := range cases {
+		if got := EvalFilter(c.expr, c.task, today); got != c.want {
+			t.Errorf("EvalFilter(%q) = %v, want %v", c.expr, got, c.want)
+		}
+	}
+}
+
+func TestParseQuickAdd(t *testing.T) {
+	q := parseQuickAdd("Buy milk @errand tomorrow 9am p1")
+	if q.Content != "Buy milk" {
+		t.Fatalf("content = %q", q.Content)
+	}
+	if len(q.Labels) != 1 || q.Labels[0] != "errand" {
+		t.Fatalf("labels = %v", q.Labels)
+	}
+	if q.Priority != 4 { // display p1 → API 4
+		t.Fatalf("priority = %d, want 4", q.Priority)
+	}
+	if q.DueString != "tomorrow 9am" {
+		t.Fatalf("due = %q", q.DueString)
+	}
+	// plain task with no date/labels
+	q2 := parseQuickAdd("Pay Globe Anvaya")
+	if q2.Content != "Pay Globe Anvaya" || q2.DueString != "" {
+		t.Fatalf("plain parse wrong: %+v", q2)
 	}
 }
 
 func sampleTasks() []Task {
 	return []Task{
-		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay Globe", DueDate: "today"},
+		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay Globe", DueDate: "2026-06-15"},
 		{ID: "2", Priority: "p4", Project: "#Personal", Content: "Read a book"},
 	}
 }
@@ -42,9 +102,6 @@ func TestTasksLoadedPopulatesList(t *testing.T) {
 	mm := nm.(model)
 	if n := len(mm.list.Items()); n != 2 {
 		t.Fatalf("want 2 items, got %d", n)
-	}
-	if mm.loading {
-		t.Fatal("should not be loading after load")
 	}
 	if mm.status != "2 tasks" {
 		t.Fatalf("status = %q", mm.status)
@@ -126,13 +183,13 @@ func TestKeyOpensSearchMode(t *testing.T) {
 	}
 }
 
-func TestSearchEnterSetsFilterAndReloads(t *testing.T) {
+func TestSearchEnterSetsFilter(t *testing.T) {
 	m := initialModel()
 	m.width, m.height = 100, 40
 	// enter search mode
 	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = nm.(model)
-	// type "today"
+	// type "today" (a filter expression)
 	for _, r := range "today" {
 		nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = nm.(model)
@@ -146,8 +203,8 @@ func TestSearchEnterSetsFilterAndReloads(t *testing.T) {
 	if m.filter != "today" {
 		t.Fatalf("filter = %q, want today", m.filter)
 	}
-	if cmd == nil {
-		t.Fatal("expected a reload command")
+	if cmd != nil {
+		t.Fatal("filters are evaluated locally now; no reload command expected")
 	}
 }
 
@@ -442,26 +499,26 @@ func TestEnterOpensDetail(t *testing.T) {
 	}
 }
 
-func TestPrioNum(t *testing.T) {
-	cases := map[string]int{"p1": 1, "p2": 2, "p3": 3, "p4": 4, "": 4, "x": 4}
-	for in, want := range cases {
-		if got := prioNum(in); got != want {
-			t.Errorf("prioNum(%q) = %d, want %d", in, got, want)
-		}
-	}
-}
-
 func TestOngoingFilter(t *testing.T) {
 	m := initialModel()
 	m.width, m.height = 100, 40
 	m.list.SetSize(100, 36)
+	nm, _ := m.Update(tasksLoadedMsg{tasks: []Task{
+		{ID: "1", Content: "a", Labels: "@ongoing"},
+		{ID: "2", Content: "b", Labels: "@x"},
+		{ID: "3", Content: "c", Labels: "@ongoing @y"},
+	}})
+	m = nm.(model)
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
 	m = nm.(model)
 	if m.filter != "@ongoing" {
 		t.Fatalf("'o' should set the @ongoing filter, got %q", m.filter)
 	}
-	if cmd == nil {
-		t.Fatal("ongoing is a server filter; expected a reload command")
+	if cmd != nil {
+		t.Fatal("filters are local now; no reload command expected")
+	}
+	if got := len(m.list.Items()); got != 2 {
+		t.Fatalf("want 2 @ongoing tasks, got %d", got)
 	}
 }
 

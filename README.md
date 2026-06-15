@@ -3,64 +3,55 @@
 A fast, colourful **terminal UI for [Todoist](https://todoist.com)**, built in Go with
 [Bubble Tea](https://github.com/charmbracelet/bubbletea) + [Lipgloss](https://github.com/charmbracelet/lipgloss).
 
-It's a friendly front-end over the [`sachaos/todoist`](https://github.com/sachaos/todoist)
-command-line client — it shells out to the `todoist` binary and parses its CSV output,
-so it reuses your existing authentication and local cache. No API token wiring required.
+It talks to Todoist directly over the **Sync API** and is **offline-first**: it keeps a
+local cache on disk, applies your changes instantly, queues them, and pushes everything
+to the server when you sync. No `todoist` CLI required.
 
 ```
- ✓ Todoist   all tasks
+ ✓ Todoist   all tasks   ⇅ due date ↑
  ▌ p1  Pay Globe Westgrove
-     #Bills Payments  ·  25/06/05(Thu) 09:00  ·  @bills-payment
+     2026-06-05 09:00  ·  #Bills Payments  ·  @bills-payment
    p4  Read a book
      #Personal
- a add · A add→last · / search · enter/c done · d del · r refresh · q quit
+ added: Call plumber   ●1 unsynced · online      a add · / search · s sync · …
 ```
 
 ---
 
 ## Features
 
+- **Offline-first** — works fully offline from a local cache; changes queue up and push
+  on `s` (sync). A background sync runs on startup when you're online.
 - **Browse** all tasks with priority-coloured markers (p1 red · p2 orange · p3 blue · p4 grey).
-- **Add tasks easily** with natural-language quick-add (`Buy milk @errand tomorrow 9am p1`).
-- **Project picker on add** — press `a` and choose the destination project from a
-  type-to-filter list. The **last project you used is pre-selected**, so you can just
-  hit `Enter`.
-- **`A` shortcut** — add straight to the *last project* you picked, skipping the picker.
-  Your last project is remembered across restarts.
-- **Smart search** — type plain words for an instant **local text search** over task
-  name / project / labels (filters live as you type), or type a real
-  [Todoist filter](https://todoist.com/help/articles/205248842)
-  (`today | overdue`, `#Personal & p1`, `@follow-up`) to run it server-side.
-- **View by Project** — press `p`, pick a project from the list, and the view narrows
-  to just that project's tasks. Press `o` for everything tagged `@ongoing`.
-- **Open & edit a task** — press `Enter` to view a task and change its **priority,
-  due date, labels, or name**, or complete it, all in place.
-- **Sort** the list by priority, due date, project, name, or labels (`1`–`5`).
-- **Browser-style navigation** — `b` back, `h` home, `H`/`?` help.
-- **Complete**, **delete** (with confirmation), **refresh** (`r`) and **sync** (`s`)
-  — all from the keyboard.
+- **Add tasks** with natural-language quick-add (`Buy milk @errand tomorrow 9am p1`).
+- **Project picker on add** with your **3 most recent projects** at the top; `A` adds
+  straight to the most recent one.
+- **Smart search** — plain words do an instant local text search; filter expressions
+  (`today | overdue`, `#Personal & p1`, `@follow-up`) are evaluated **locally**.
+- **View by Project** (`p`), **filter by priority** (`P`), **ongoing** (`o`),
+  **recently added** (`R`).
+- **Open & edit a task** (`Enter`) — change **priority, due date, deadline, labels,
+  name**, add **comments**, or complete it.
+- **Sort** by priority, due date, **deadline**, project, name, or labels (`1`–`6`).
+- **Browser-style navigation** — `b` back, `h` home, `H`/`?` (scrollable) help.
 
 ---
 
-## Prerequisites
+## Setup (API token)
 
-You need the **`todoist` CLI** ([`sachaos/todoist`](https://github.com/sachaos/todoist))
-installed, on your `PATH`, and authenticated. Verify with:
+todoui needs your Todoist API token (Todoist → **Settings → Integrations → Developer →
+API token**). Provide it either way:
+
+- **Env var:** `export TODOIST_API_TOKEN=<your token>`, or
+- **File:** `~/.config/todoist/config.json` containing `{"token": "<your token>"}`
+  (this is the same file the `sachaos/todoist` CLI uses, so if you have that CLI set up,
+  todoui works with no extra steps).
+
+Verify headlessly:
 
 ```bash
-todoist list      # should print your tasks
+todoui sync     # "synced: … N tasks, M projects cached"
 ```
-
-If you've never used it, run `todoist sync` once and follow the auth prompt
-(it asks for your Todoist API token, found in Todoist → Settings → Integrations → Developer).
-
-### Installing the `todoist` CLI
-
-| Platform | Command |
-|----------|---------|
-| **macOS** | `brew install todoist` |
-| **Linux** | Download a binary from the [releases page](https://github.com/sachaos/todoist/releases), or `go install github.com/sachaos/todoist@latest` |
-| **Windows** | Download the `.exe` from [releases](https://github.com/sachaos/todoist/releases), or `go install github.com/sachaos/todoist@latest` (ensure `%GOPATH%\bin` is on `PATH`) |
 
 ---
 
@@ -138,35 +129,30 @@ entirely from the keyboard.
 | `P`             | **Filter by priority** — pick p1–p4 from a menu              |
 | `o`             | **Ongoing** — show all tasks tagged `@ongoing`               |
 | `R`             | **Recently added** — the last 10 tasks you created           |
-| `/`             | Search — plain words (local text search) or a Todoist filter |
-| `1`–`5`         | **Sort** by priority / due / project / name / labels (`0` = default; repeat to reverse) |
+| `/`             | Search — plain words (local text search) or a filter expr    |
+| `1`–`6`         | **Sort** by priority / due / deadline / project / name / labels (`0` = default; repeat to reverse) |
 | `b`             | **Back** — return to the previous view (like a browser)      |
 | `h` / `Esc`     | **Home** — back to all tasks / all projects                  |
-| `r`             | Refresh the list                                            |
-| `s`             | **Sync** the `todoist` client, then refresh                 |
-| `H` / `?`       | **Help** — open the full keyboard reference                  |
+| `r`             | Refresh the view from the local cache                       |
+| `s`             | **Sync** — push queued changes & pull updates               |
+| `H` / `?`       | **Help** — open the (scrollable) keyboard reference          |
 | `q` / `Ctrl+C`  | Quit                                                         |
 
 ### Task view (press `Enter` on a task)
 
-Opens a detail screen for the selected task. From there:
+Opens a detail screen showing priority, due date, **deadline**, project, labels and
+comments. From there:
 
 | Key       | Action                                  |
 |-----------|-----------------------------------------|
 | `1`–`4`   | Set priority (p1–p4)                     |
 | `t`       | Set / change the due date (natural language) |
+| `D`       | Set / change the **deadline** (`YYYY-MM-DD`, empty clears) |
 | `l`       | Edit labels (comma-separated, without `@`) |
 | `e`       | Edit the task name                       |
 | `m`       | Add a comment (existing comments are listed above) |
 | `c`       | Complete the task                        |
 | `b` / `Esc` | Back to the list                      |
-
-Comments are fetched and posted via Todoist's REST API (the `todoist` CLI has no
-comment support). todoui reuses the API token the CLI already stored at
-`~/.config/todoist/config.json`.
-
-> Note: the underlying `todoist modify` always re-applies a priority, so todoui
-> carries the task's current priority on every edit to avoid silently resetting it.
 
 #### In the project picker (used by both `a` and `p`)
 Your **3 most recently chosen projects** appear at the top (in gold, marked `★`),
@@ -179,32 +165,15 @@ The search bar (`/`) is **smart**:
 
 - **Plain words** → an instant, case-insensitive **local search** over task content,
   project, and labels. It filters *live* as you type. e.g. `anvaya`, `pay globe`.
-- **Filter expressions** → run server-side via the `todoist` CLI. Detected when your
-  query uses operators (`|`, `&`, `#`, `@`, …) or keywords (`today`, `overdue`,
-  `p1`, `7 days`, …). e.g. `today | overdue`, `#Personal & p1`.
+- **Filter expressions** → evaluated **locally** against the cache. Detected when your
+  query uses operators (`|`, `&`, `!`, `#`, `@`, `(` `)`) or keywords. Supported subset:
+  `today`, `overdue`, `no date`, `no deadline`, `deadline`, `recurring`, `@label`,
+  `#project`, `p1`–`p4`, combined with `|`/`,` (or), `&` (and), `!` (not). e.g.
+  `today | overdue`, `#Personal & p1`, `@follow-up & !today`.
 
 Press `Esc` to clear and return to all tasks.
 
-### Viewing one project
-
-Press `p`, choose a project (type to narrow the list), and the task view filters to that
-project. You can stack a text search on top with `/`.
-
-To return to the full list, either press `p` again and pick the **"↩ All Projects"**
-entry at the top of the menu, press `h` (Home), or press `Esc`.
-
-### Navigating views
-
-todoui keeps a **browser-style history** of your views (all tasks → a project → a
-search, etc.):
-
-- `b` — **Back** to the previous view.
-- `h` / `Esc` — **Home**, jump straight back to all tasks / all projects.
-- `H` / `?` — open the **Help** page with the full keyboard reference.
-
-### Add syntax (Todoist quick-add)
-
-The add bar understands Todoist's natural language:
+### Add syntax (natural language)
 
 ```
 Pay Globe bill @bills-payment tomorrow 9am p1
@@ -212,41 +181,34 @@ Review PR every monday
 Dentist appointment next friday 3pm
 ```
 
-Dates, `@labels`, and `p1`–`p4` priority are parsed by Todoist. The **project** comes
-from the picker (not from `#project` text), which makes multi-word project names reliable.
-
-> **How project routing works:** `todoist quick` parses natural language but can't
-> reliably route multi-word project names. So todoui quick-adds the task (for the NL
-> parsing), then moves the new task into your chosen project via `todoist modify
-> --project-id`. You get both: natural language *and* exact project placement.
-
-### Search syntax (Todoist filters)
-
-```
-today | overdue
-#Personal & p1
-@follow-up
-search: globe
-no date
-7 days
-```
-
-See the [Todoist filters guide](https://todoist.com/help/articles/205248842) for the full grammar.
+`@labels` and `p1`–`p4` are parsed locally; a trailing date phrase is sent to Todoist and
+resolved on the next sync (until then it shows the text you typed). The **project** comes
+from the picker, so multi-word project names are always exact.
 
 ---
 
-## Configuration / state
+## How sync works
 
-todoui remembers your last-used project so `Enter`/`A` are instant. It's stored in a
-single tiny file:
+todoui is **offline-first**:
 
-| Platform | Location |
-|----------|----------|
-| macOS / Linux | `~/.config/todoui/last_project.txt` |
-| Windows | `%USERPROFILE%\.config\todoui\last_project.txt` |
+1. On startup it loads the on-disk cache and shows it immediately (works with no network),
+   then runs one background sync if you're online.
+2. Every change (add / complete / delete / edit / comment) is applied to the cache
+   **instantly** and appended to a pending-command queue. The footer shows `●N unsynced`.
+3. Pressing **`s`** flushes the queue and pulls updates via the Todoist **Sync API**
+   (incremental via a sync token). Offline, changes simply stay queued until the next sync.
 
-Delete that file to reset. There's no other configuration — todoui inherits everything
-else (auth, cache, default project) from the `todoist` CLI.
+Headless: `todoui sync` does one push+pull from a script or cron.
+
+### State / cache files
+
+| File | Purpose |
+|------|---------|
+| `~/.config/todoui/cache.json` | Local snapshot (tasks, projects, labels, notes, sync token) |
+| `~/.config/todoui/queue.json` | Pending changes not yet pushed |
+| `~/.config/todoui/recent_projects.txt` | Your last 3 chosen projects |
+
+Delete these to reset; they're rebuilt on the next sync.
 
 ---
 
@@ -254,10 +216,12 @@ else (auth, cache, default project) from the `todoist` CLI.
 
 | File           | Purpose                                                                 |
 |----------------|-------------------------------------------------------------------------|
-| `todoist.go`   | Thin wrapper around the `todoist` CLI (list/quick-add/close/delete/modify/sync, projects, labels) |
-| `state.go`     | Persisting the last-used project                                         |
+| `sync.go`      | Todoist Sync API client, local cache, command queue, model translation  |
+| `filter.go`    | Local evaluator for the Todoist filter subset                           |
+| `state.go`     | Persisting the recent-projects list                                     |
+| `todoist.go`   | Shared `Task` / `Project` types                                         |
 | `main.go`      | The Bubble Tea model, update loop, and Lipgloss styling                  |
-| `app_test.go`  | Tests for CSV parsing and UI state transitions                          |
+| `app_test.go`  | Tests for mapping, filters, parsing, and UI state transitions           |
 
 ### Running the tests
 
@@ -269,11 +233,12 @@ go test ./...
 
 ## Troubleshooting
 
-- **`todoist: executable file not found`** — the `todoist` CLI isn't on your `PATH`.
-  Install it (see Prerequisites) and confirm `todoist list` works in the same shell.
-- **Empty list / auth errors** — run `todoist sync` once to (re)authenticate.
-- **Filter error** — your search string isn't valid Todoist filter syntax; press `Esc`
-  to clear and try again.
+- **`no token …`** — set `TODOIST_API_TOKEN` or create
+  `~/.config/todoist/config.json` with `{"token":"…"}` (see **Setup**). Verify with
+  `todoui sync`.
+- **Empty list** — run `todoui sync` (or press `s` in the app) to pull from the server.
+- **`●N unsynced` stays** — you're offline or the token is invalid; changes are safe in
+  the queue and push on the next successful sync.
 - **Colours look off** — make sure your terminal advertises a 256-colour/truecolor
   `TERM` (e.g. `xterm-256color`).
 

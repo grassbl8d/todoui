@@ -187,6 +187,7 @@ type editField int
 
 const (
 	efDate editField = iota
+	efDeadline
 	efLabels
 	efContent
 )
@@ -207,6 +208,7 @@ const (
 	sortNone     sortMode = iota // original Todoist order
 	sortPriority                 // p1 → p4
 	sortDue                      // soonest due first (no date last)
+	sortDeadline                 // soonest deadline first (none last)
 	sortProject                  // project name A→Z
 	sortName                     // task content A→Z
 	sortLabels                   // labels A→Z
@@ -218,6 +220,8 @@ func (s sortMode) label() string {
 		return "priority"
 	case sortDue:
 		return "due date"
+	case sortDeadline:
+		return "deadline"
 	case sortProject:
 		return "project"
 	case sortName:
@@ -250,7 +254,10 @@ type model struct {
 	projectView  string     // local project filter, display name e.g. "#Bills" (working value)
 	priorityView string     // local priority filter "p1".."p4" (working value)
 	prioCursor   int        // cursor in the priority picker
-	loadedFilter string     // the server filter that allTasks currently reflects
+	cache        *Cache     // local offline-first snapshot
+	queue        []Command  // pending Sync API commands (flushed on sync)
+	syncing      bool       // a sync is in flight
+	online       bool       // last sync succeeded
 	current      viewState  // the committed view currently shown
 	history      []viewState // back-stack of previously committed views
 	sortMode     sortMode   // current ordering of the task list
@@ -259,34 +266,28 @@ type model struct {
 	detailID     string     // id of the task in the detail view
 	editField    editField  // which field the detail editor is editing
 	comments     []Comment  // comments for the task in the detail view
-	commentsLoading bool    // comments are being fetched
 	commentErr   string     // error from the last comment fetch/post
 	recentView   bool       // showing the recently-added tasks
 	recentIDs    []string   // task IDs in recently-added order
 	helpOffset   int        // scroll offset of the help page
-	addProject  Project    // project chosen for the task currently being added
-	recents     []Project // recently-chosen projects, most recent first (persisted)
-	status      string
-	err         string
-	width       int
-	height      int
-	loading     bool
+	addProject   Project    // project chosen for the task currently being added
+	recents      []Project  // recently-chosen projects, most recent first (persisted)
+	status       string
+	err          string
+	width        int
+	height       int
 }
 
 // messages
-type tasksLoadedMsg struct {
+type tasksLoadedMsg struct { // used by tests to seed the task list directly
 	tasks  []Task
 	filter string
 }
-type projectsLoadedMsg struct{ projects []Project }
-type commentsLoadedMsg struct {
-	taskID   string
-	comments []Comment
-	err      error
-}
-type recentLoadedMsg struct {
-	ids []string
-	err error
+type projectsLoadedMsg struct{ projects []Project } // used by tests to seed projects
+type syncResultMsg struct {
+	resp *syncResponse
+	sent int // number of queued commands that were flushed
+	err  error
 }
 type errMsg struct{ err error }
 type actionMsg struct{ status string }
@@ -312,155 +313,200 @@ func initialModel() model {
 	ti.Prompt = "› "
 	ti.CharLimit = 200
 
-	return model{
-		list:        l,
-		projList:    pl,
-		input:       ti,
-		mode:        modeList,
-		recents:     LoadRecentProjects(),
-		loading:     true,
-		status:      "loading…",
+	c := LoadCache()
+	m := model{
+		list:     l,
+		projList: pl,
+		input:    ti,
+		mode:     modeList,
+		cache:    c,
+		queue:    LoadQueue(),
+		recents:  LoadRecentProjects(),
+		status:   "ready",
 	}
+	m.deriveAll()
+	return m
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(loadTasks(""), loadProjects())
+	// Cache is already shown; do one background sync if we have a token.
+	if _, err := Token(); err != nil {
+		return nil
+	}
+	return syncNowCmd(m.cache.SyncToken, m.queue)
 }
 
-// commands
-func loadTasks(filter string) tea.Cmd {
+// syncNowCmd flushes the queue and pulls updates in the background.
+func syncNowCmd(syncToken string, queue []Command) tea.Cmd {
+	sent := len(queue)
 	return func() tea.Msg {
-		tasks, err := ListTasks(filter)
-		if err != nil {
-			return errMsg{err}
-		}
-		return tasksLoadedMsg{tasks: tasks, filter: filter}
+		resp, err := DoSync(syncToken, queue)
+		return syncResultMsg{resp: resp, sent: sent, err: err}
 	}
 }
 
-// (project-aware add lives in quickAddInProject below)
+// deriveAll rebuilds allTasks and the project list from the cache, then re-views.
+func (m *model) deriveAll() {
+	if m.cache == nil {
+		m.cache = newCache()
+	}
+	m.allTasks = m.cache.AllTasks()
+	m.projects = m.cache.ProjectList()
+	m.applyView()
+}
 
-func loadProjects() tea.Cmd {
-	return func() tea.Msg {
-		ps, err := ListProjects()
-		if err != nil {
-			return errMsg{err}
+// enqueue appends a command, persists the queue, and persists the cache.
+func (m *model) enqueue(cmd Command) {
+	m.queue = append(m.queue, cmd)
+	SaveQueue(m.queue)
+	m.cache.Save()
+}
+
+func (m *model) pendingNote() string {
+	if n := len(m.queue); n > 0 {
+		return fmt.Sprintf("• %d unsynced", n)
+	}
+	return ""
+}
+
+// ---------- optimistic local mutations (queued for sync) ----------
+
+func (m *model) addTask(text string, proj Project) {
+	q := parseQuickAdd(text)
+	temp := "tmp-" + genID()
+	it := apiItem{
+		ID:        temp,
+		Content:   q.Content,
+		ProjectID: proj.ID,
+		Priority:  q.Priority,
+		Labels:    q.Labels,
+		AddedAt:   nowStamp(),
+	}
+	if q.DueString != "" {
+		it.Due = &apiDue{String: q.DueString}
+	}
+	m.cache.Items[temp] = it
+	args := map[string]any{"content": q.Content, "priority": q.Priority}
+	if proj.ID != "" {
+		args["project_id"] = proj.ID
+	}
+	if len(q.Labels) > 0 {
+		args["labels"] = q.Labels
+	}
+	if q.DueString != "" {
+		args["due"] = map[string]any{"string": q.DueString}
+	}
+	m.enqueue(Command{Type: "item_add", UUID: genID(), TempID: temp, Args: args})
+	m.deriveAll()
+	m.status = "added: " + q.Content
+}
+
+func (m *model) completeTask(id, content string) {
+	if it, ok := m.cache.Items[id]; ok {
+		it.Checked = true
+		m.cache.Items[id] = it
+	}
+	m.enqueue(Command{Type: "item_complete", UUID: genID(), Args: map[string]any{"id": id}})
+	m.deriveAll()
+	m.status = "completed: " + content
+}
+
+func (m *model) deleteTask(id, content string) {
+	delete(m.cache.Items, id)
+	m.enqueue(Command{Type: "item_delete", UUID: genID(), Args: map[string]any{"id": id}})
+	m.deriveAll()
+	m.status = "deleted: " + content
+}
+
+// updateItem mutates the cached item, queues an item_update, and refreshes.
+func (m *model) updateItem(id string, mutate func(*apiItem), args map[string]any, status string) {
+	if it, ok := m.cache.Items[id]; ok {
+		mutate(&it)
+		m.cache.Items[id] = it
+	}
+	args["id"] = id
+	m.enqueue(Command{Type: "item_update", UUID: genID(), Args: args})
+	m.deriveAll()
+	m.refreshDetail()
+	m.status = status
+}
+
+func (m *model) setPriorityDisplay(id string, p int) {
+	api := 5 - p // display pN → API priority
+	m.updateItem(id, func(it *apiItem) { it.Priority = api },
+		map[string]any{"priority": api}, fmt.Sprintf("priority → p%d", p))
+}
+
+func (m *model) setDue(id, dueString string) {
+	var dueArg any
+	m.updateItem(id, func(it *apiItem) {
+		if dueString == "" {
+			it.Due = nil
+		} else {
+			it.Due = &apiDue{String: dueString}
 		}
-		return projectsLoadedMsg{ps}
+	}, map[string]any{}, "due date updated")
+	if dueString != "" {
+		dueArg = map[string]any{"string": dueString}
+	}
+	// re-queue with the right due arg (updateItem set id already on the last cmd)
+	m.queue[len(m.queue)-1].Args["due"] = dueArg
+	SaveQueue(m.queue)
+}
+
+func (m *model) setDeadline(id, date string) {
+	var dlArg any
+	if date != "" {
+		dlArg = map[string]any{"date": date, "lang": "en"}
+	}
+	m.updateItem(id, func(it *apiItem) {
+		if date == "" {
+			it.Deadline = nil
+		} else {
+			it.Deadline = &apiDeadline{Date: date, Lang: "en"}
+		}
+	}, map[string]any{"deadline": dlArg}, "deadline updated")
+}
+
+func (m *model) setLabels(id, csv string) {
+	labels := splitLabels(csv)
+	m.updateItem(id, func(it *apiItem) { it.Labels = labels },
+		map[string]any{"labels": labels}, "labels updated")
+}
+
+func (m *model) setContent(id, content string) {
+	m.updateItem(id, func(it *apiItem) { it.Content = content },
+		map[string]any{"content": content}, "name updated")
+}
+
+func (m *model) addCommentLocal(id, text string) {
+	temp := "tmp-" + genID()
+	m.cache.Notes[temp] = apiNote{ID: temp, ItemID: id, Content: text, PostedAt: nowStamp()}
+	m.enqueue(Command{Type: "note_add", UUID: genID(), TempID: temp,
+		Args: map[string]any{"item_id": id, "content": text}})
+	m.comments = m.cache.CommentsFor(id)
+	m.status = "comment added"
+}
+
+func (m *model) refreshDetail() {
+	if m.detailID == "" || m.cache == nil {
+		return
+	}
+	if it, ok := m.cache.Items[m.detailID]; ok {
+		m.detailTask = m.cache.toTask(it)
 	}
 }
 
-func isInbox(p Project) bool {
-	return p.ID == "" || strings.EqualFold(strings.TrimPrefix(p.Name, "#"), "Inbox")
-}
-
-// quickAddInProject creates a task via natural-language quick-add (so dates,
-// priority and labels in the text are parsed), then moves it into the chosen
-// project. Quick-add can't reliably route multi-word project names, so we
-// diff the task list before/after and re-home the newly created task(s).
-func quickAddInProject(text string, proj Project) tea.Cmd {
-	return func() tea.Msg {
-		var before map[string]bool
-		if !isInbox(proj) {
-			before = map[string]bool{}
-			if prev, err := ListTasks(""); err == nil {
-				for _, t := range prev {
-					before[t.ID] = true
-				}
-			}
+// splitLabels turns "a, b ,c" into ["a","b","c"] (dropping @ and blanks).
+func splitLabels(s string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
+		f = strings.TrimPrefix(strings.TrimSpace(f), "@")
+		if f != "" {
+			out = append(out, f)
 		}
-		if err := QuickAdd(text); err != nil {
-			return errMsg{err}
-		}
-		if !isInbox(proj) {
-			if after, err := ListTasks(""); err == nil {
-				for _, t := range after {
-					if !before[t.ID] {
-						_ = ModifyProject(t.ID, proj.ID, prioNum(t.Priority))
-					}
-				}
-			}
-		}
-		return actionMsg{status: "added to " + proj.Name + ": " + text}
 	}
-}
-
-func setPriorityCmd(id string, p int) tea.Cmd {
-	return func() tea.Msg {
-		if err := SetPriority(id, p); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: fmt.Sprintf("priority → p%d", p)}
-	}
-}
-
-func setDateCmd(id, date string, prio int) tea.Cmd {
-	return func() tea.Msg {
-		if err := SetDate(id, date, prio); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: "due date updated"}
-	}
-}
-
-func setLabelsCmd(id, labels string, prio int) tea.Cmd {
-	return func() tea.Msg {
-		if err := SetLabels(id, labels, prio); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: "labels updated"}
-	}
-}
-
-func setContentCmd(id, content string, prio int) tea.Cmd {
-	return func() tea.Msg {
-		if err := SetContent(id, content, prio); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: "name updated"}
-	}
-}
-
-func recentCmd(limit int) tea.Cmd {
-	return func() tea.Msg {
-		ids, err := RecentTaskIDs(limit)
-		return recentLoadedMsg{ids: ids, err: err}
-	}
-}
-
-func loadCommentsCmd(id string) tea.Cmd {
-	return func() tea.Msg {
-		cs, err := ListComments(id)
-		return commentsLoadedMsg{taskID: id, comments: cs, err: err}
-	}
-}
-
-func addCommentCmd(id, content string) tea.Cmd {
-	return func() tea.Msg {
-		if err := AddComment(id, content); err != nil {
-			return commentsLoadedMsg{taskID: id, err: err}
-		}
-		cs, err := ListComments(id) // refresh after posting
-		return commentsLoadedMsg{taskID: id, comments: cs, err: err}
-	}
-}
-
-func closeCmd(id, content string) tea.Cmd {
-	return func() tea.Msg {
-		if err := CloseTask(id); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: "completed: " + content}
-	}
-}
-
-func deleteCmd(id, content string) tea.Cmd {
-	return func() tea.Msg {
-		if err := DeleteTask(id); err != nil {
-			return errMsg{err}
-		}
-		return actionMsg{status: "deleted: " + content}
-	}
+	return out
 }
 
 func (m *model) selectedTask() (Task, bool) {
@@ -489,8 +535,12 @@ func (m *model) applyView() {
 		return
 	}
 	q := strings.ToLower(strings.TrimSpace(m.textQuery))
+	today := todayStr()
 	var matched []Task
 	for _, t := range m.allTasks {
+		if m.filter != "" && !EvalFilter(m.filter, t, today) {
+			continue
+		}
 		if m.projectView != "" && t.Project != m.projectView {
 			continue
 		}
@@ -513,25 +563,13 @@ func (m *model) applyView() {
 	m.list.SetItems(items)
 }
 
-// dueSortKey turns a CLI due string ("25/06/05(Thu) 09:00") into a
-// lexicographically comparable key; empty dates sort last.
-func dueSortKey(s string) string {
+// dateSortKey makes an ISO-ish date string sortable; empty sorts last.
+func dateSortKey(s string) string {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return "99999999 9999"
+		return "9999-99-99"
 	}
-	date := s
-	if i := strings.Index(s, "("); i >= 0 {
-		date = s[:i]
-	}
-	date = strings.ReplaceAll(strings.TrimSpace(date), "/", "")
-	tm := "0000"
-	if i := strings.Index(s, ")"); i >= 0 {
-		if rest := strings.ReplaceAll(strings.TrimSpace(s[i+1:]), ":", ""); rest != "" {
-			tm = rest
-		}
-	}
-	return date + " " + tm
+	return s
 }
 
 // sortTasks orders ts in place according to the current sort mode/direction.
@@ -544,7 +582,9 @@ func (m *model) sortTasks(ts []Task) {
 	case sortPriority:
 		less = func(i, j int) bool { return ts[i].Priority < ts[j].Priority }
 	case sortDue:
-		less = func(i, j int) bool { return dueSortKey(ts[i].DueDate) < dueSortKey(ts[j].DueDate) }
+		less = func(i, j int) bool { return dateSortKey(ts[i].DueDate) < dateSortKey(ts[j].DueDate) }
+	case sortDeadline:
+		less = func(i, j int) bool { return dateSortKey(ts[i].Deadline) < dateSortKey(ts[j].Deadline) }
 	case sortProject:
 		less = func(i, j int) bool {
 			return strings.ToLower(ts[i].Project) < strings.ToLower(ts[j].Project)
@@ -596,11 +636,7 @@ func (m *model) scopeStatus() string {
 func (m *model) applyState(s viewState) tea.Cmd {
 	m.recentView = false // any committed view leaves the recently-added view
 	m.filter, m.textQuery, m.projectView, m.priorityView = s.filter, s.textQuery, s.projectView, s.priorityView
-	if s.filter != m.loadedFilter {
-		m.loading = true
-		return loadTasks(s.filter)
-	}
-	m.applyView()
+	m.applyView() // everything is local now
 	m.status = m.scopeStatus()
 	return nil
 }
@@ -660,67 +696,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projList.SetSize(msg.Width, msg.Height-4)
 		return m, nil
 
-	case projectsLoadedMsg:
+	case projectsLoadedMsg: // test seam
 		m.projects = msg.projects
 		m.setPickerItems()
 		return m, nil
 
-	case commentsLoadedMsg:
-		if msg.taskID == m.detailID {
-			m.commentsLoading = false
-			if msg.err != nil {
-				m.commentErr = msg.err.Error()
-			} else {
-				m.comments = msg.comments
-				m.commentErr = ""
-			}
-		}
-		return m, nil
-
-	case recentLoadedMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err.Error()
-			return m, nil
-		}
-		m.err = ""
-		m.recentView = true
-		m.recentIDs = msg.ids
-		m.applyView()
-		m.status = fmt.Sprintf("recently added — %d", len(m.list.Items()))
-		return m, nil
-
-	case tasksLoadedMsg:
-		m.loading = false
+	case tasksLoadedMsg: // test seam: seed the task list directly
 		m.filter = msg.filter
-		m.loadedFilter = msg.filter
 		m.allTasks = msg.tasks
 		m.applyView()
 		m.status = m.scopeStatus()
-		// Keep the detail view in sync after an edit/reload.
-		if (m.mode == modeDetail || m.mode == modeDetailEdit) && m.detailID != "" {
-			found := false
-			for _, t := range m.allTasks {
-				if t.ID == m.detailID {
-					m.detailTask = t
-					found = true
-					break
-				}
-			}
-			if !found {
-				// task no longer present (e.g. completed) → return to list
-				m.mode = modeList
-			}
+		return m, nil
+
+	case syncResultMsg:
+		m.syncing = false
+		if msg.err != nil {
+			m.online = false
+			m.err = "offline — changes queued (" + msg.err.Error() + ")"
+			return m, nil
 		}
+		m.online = true
+		m.err = ""
+		m.cache.Merge(msg.resp)
+		if msg.sent <= len(m.queue) { // drop flushed commands, keep any added during sync
+			m.queue = m.queue[msg.sent:]
+		} else {
+			m.queue = nil
+		}
+		SaveQueue(m.queue)
+		m.cache.Save()
+		m.deriveAll()
+		m.refreshDetail()
+		if m.detailID != "" {
+			m.comments = m.cache.CommentsFor(m.detailID)
+		}
+		m.status = "synced"
 		return m, nil
 
 	case actionMsg:
 		m.status = msg.status
-		m.loading = true
-		return m, loadTasks(m.filter) // reload current view
+		return m, nil
 
 	case errMsg:
-		m.loading = false
 		m.err = msg.err.Error()
 		return m, nil
 
@@ -807,24 +824,29 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailID = t.ID
 			m.mode = modeDetail
 			m.err = ""
-			m.comments = nil
 			m.commentErr = ""
-			m.commentsLoading = true
-			return m, loadCommentsCmd(t.ID)
+			if m.cache != nil {
+				m.comments = m.cache.CommentsFor(t.ID)
+			}
 		}
 		return m, nil
 	case "c":
 		if t, ok := m.selectedTask(); ok {
-			return m, closeCmd(t.ID, t.Content)
+			m.completeTask(t.ID, t.Content)
 		}
+		return m, nil
 	case "o":
 		// Ongoing — show all tasks tagged @ongoing.
 		return m, m.commit(viewState{filter: "@ongoing"})
 	case "R":
-		// Recently added — last 10 tasks by added date.
-		m.loading = true
-		m.status = "loading recent…"
-		return m, recentCmd(10)
+		// Recently added — last 10 tasks by added date (from cache).
+		m.recentView = true
+		if m.cache != nil {
+			m.recentIDs = m.cache.RecentTaskIDs(10)
+		}
+		m.applyView()
+		m.status = fmt.Sprintf("recently added — %d", len(m.list.Items()))
+		return m, nil
 	case "P":
 		// Filter by priority — open the priority picker.
 		m.mode = modePriorityPick
@@ -842,14 +864,18 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	case "r":
-		m.loading = true
-		m.status = "refreshing…"
-		return m, loadTasks(m.filter)
+		// Refresh the local view from the cache.
+		m.deriveAll()
+		m.status = m.scopeStatus()
+		return m, nil
 	case "s":
-		// Sync the underlying todoist client, then refresh.
-		m.loading = true
+		// Sync: flush queued changes and pull updates.
+		if m.syncing {
+			return m, nil
+		}
+		m.syncing = true
 		m.status = "syncing…"
-		return m, tea.Sequence(syncCmd(), loadTasks(m.filter))
+		return m, syncNowCmd(m.cache.SyncToken, m.queue)
 	case "b":
 		return m, m.goBack()
 	case "h", "esc":
@@ -866,12 +892,15 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.setSort(sortDue)
 		return m, nil
 	case "3":
-		m.setSort(sortProject)
+		m.setSort(sortDeadline)
 		return m, nil
 	case "4":
-		m.setSort(sortName)
+		m.setSort(sortProject)
 		return m, nil
 	case "5":
+		m.setSort(sortName)
+		return m, nil
+	case "6":
 		m.setSort(sortLabels)
 		return m, nil
 	case "0":
@@ -902,13 +931,6 @@ func (m *model) setSort(s sortMode) {
 		dir = "↓"
 	}
 	m.status = fmt.Sprintf("sort: %s %s — %d", s.label(), dir, len(m.list.Items()))
-}
-
-func syncCmd() tea.Cmd {
-	return func() tea.Msg {
-		_ = Sync()
-		return nil
-	}
 }
 
 // allProjectsID is the sentinel for the "All Projects" picker entry (view mode).
@@ -1060,8 +1082,8 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if val == "" {
 				return m, nil
 			}
-			m.loading = true
-			return m, quickAddInProject(val, m.addProject)
+			m.addTask(val, m.addProject)
+			return m, nil
 		case modeSearch:
 			m.mode = modeList
 			m.input.Blur()
@@ -1115,14 +1137,16 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "c":
 		m.mode = modeList
-		m.loading = true
-		return m, closeCmd(m.detailID, m.detailTask.Content)
+		m.completeTask(m.detailID, m.detailTask.Content)
+		return m, nil
 	case "1", "2", "3", "4":
 		p := int(msg.String()[0] - '0')
-		m.loading = true
-		return m, setPriorityCmd(m.detailID, p)
-	case "t", "D":
-		return m, m.startEdit(efDate, "today · tomorrow 9am · 2026/07/01 · (empty cancels)", "")
+		m.setPriorityDisplay(m.detailID, p)
+		return m, nil
+	case "t":
+		return m, m.startEdit(efDate, "today · tomorrow 9am · every monday · (empty clears)", "")
+	case "D":
+		return m, m.startEdit(efDeadline, "YYYY-MM-DD · (empty clears)", m.detailTask.Deadline)
 	case "l":
 		return m, m.startEdit(efLabels, "comma-separated, e.g. ongoing,follow-up", labelsCSV(m.detailTask.Labels))
 	case "e":
@@ -1134,9 +1158,6 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.CursorEnd()
 		m.input.Focus()
 		return m, textinput.Blink
-	case "r":
-		m.loading = true
-		return m, loadTasks(m.filter)
 	}
 	return m, nil
 }
@@ -1154,8 +1175,8 @@ func (m model) updateCommentAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if val == "" {
 			return m, nil
 		}
-		m.commentsLoading = true
-		return m, addCommentCmd(m.detailID, val)
+		m.addCommentLocal(m.detailID, val)
+		return m, nil
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
@@ -1172,18 +1193,17 @@ func (m model) updateDetailEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		val := strings.TrimSpace(m.input.Value())
 		m.mode = modeDetail
 		m.input.Blur()
-		if val == "" && m.editField != efLabels {
-			return m, nil // empty cancels (except labels, where empty clears them)
-		}
-		m.loading = true
-		prio := prioNum(m.detailTask.Priority)
 		switch m.editField {
 		case efDate:
-			return m, setDateCmd(m.detailID, val, prio)
+			m.setDue(m.detailID, val)
+		case efDeadline:
+			m.setDeadline(m.detailID, val)
 		case efLabels:
-			return m, setLabelsCmd(m.detailID, val, prio)
+			m.setLabels(m.detailID, val)
 		case efContent:
-			return m, setContentCmd(m.detailID, val, prio)
+			if val != "" {
+				m.setContent(m.detailID, val)
+			}
 		}
 		return m, nil
 	}
@@ -1197,9 +1217,9 @@ func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "y", "Y", "enter":
 		m.mode = modeList
 		if t, ok := m.selectedTask(); ok {
-			m.loading = true
-			return m, deleteCmd(t.ID, t.Content)
+			m.deleteTask(t.ID, t.Content)
 		}
+		return m, nil
 	default:
 		m.mode = modeList
 	}
@@ -1335,6 +1355,7 @@ func (m model) detailView() string {
 		"",
 		field("Priority", t.Priority, lipgloss.NewStyle().Foreground(pc).Bold(true)),
 		field("Due", t.DueDate, lipgloss.NewStyle().Foreground(lipgloss.Color("#E5C07B"))),
+		field("Deadline", t.Deadline, lipgloss.NewStyle().Foreground(lipgloss.Color("#E06C75"))),
 		field("Project", t.Project, lipgloss.NewStyle().Foreground(lipgloss.Color("#8AB4F8"))),
 		field("Labels", t.Labels, lipgloss.NewStyle().Foreground(lipgloss.Color("#98C379"))),
 		field("ID", t.ID, label),
@@ -1344,15 +1365,13 @@ func (m model) detailView() string {
 	// Comments section.
 	head := lipgloss.NewStyle().Foreground(lipgloss.Color("#8AB4F8")).Bold(true)
 	count := ""
-	if !m.commentsLoading && m.commentErr == "" {
+	if m.commentErr == "" {
 		count = fmt.Sprintf(" (%d)", len(m.comments))
 	}
 	lines = append(lines, "  "+head.Render("Comments"+count))
 	switch {
 	case m.commentErr != "":
 		lines = append(lines, "  "+errStyle.Render("⚠ "+m.commentErr))
-	case m.commentsLoading:
-		lines = append(lines, "  "+label.Render("loading…"))
 	case len(m.comments) == 0:
 		lines = append(lines, "  "+label.Render("(none yet)"))
 	default:
@@ -1365,7 +1384,12 @@ func (m model) detailView() string {
 	lines = append(lines, "")
 
 	if m.mode == modeDetailEdit {
-		titles := map[editField]string{efDate: "Set due date", efLabels: "Set labels (comma-separated)", efContent: "Edit name"}
+		titles := map[editField]string{
+			efDate:     "Set due date",
+			efDeadline: "Set deadline (YYYY-MM-DD)",
+			efLabels:   "Set labels (comma-separated)",
+			efContent:  "Edit name",
+		}
 		prompt := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(titles[m.editField] + "  ")
 		box := promptBox.Width(m.width - 4).Render(prompt + m.input.View())
 		lines = append(lines, box, "", helpStyle.Render("  enter save · esc cancel"))
@@ -1376,17 +1400,16 @@ func (m model) detailView() string {
 	} else {
 		actions := "  " +
 			key.Render("1-4") + label.Render(" priority  ") +
-			key.Render("t") + label.Render(" date  ") +
+			key.Render("t") + label.Render(" due  ") +
+			key.Render("D") + label.Render(" deadline  ") +
 			key.Render("l") + label.Render(" labels  ") +
 			key.Render("e") + label.Render(" name  ") +
 			key.Render("m") + label.Render(" comment  ") +
-			key.Render("c") + label.Render(" complete  ") +
-			key.Render("b/esc") + label.Render(" back")
+			key.Render("c") + label.Render(" done  ") +
+			key.Render("b") + label.Render(" back")
 		lines = append(lines, actions)
 		if m.err != "" {
 			lines = append(lines, "", errStyle.Render("⚠ "+m.err))
-		} else if m.loading {
-			lines = append(lines, "", statusStyle.Render("⟳ "+m.status))
 		}
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -1417,12 +1440,16 @@ func helpLines() []string {
 		row("A", "Add a task straight to the last-used project"),
 		row("c", "Complete the selected task"),
 		row("d", "Delete the selected task (asks y/n)"),
-		row("r", "Refresh the list"),
-		row("s", "Sync the todoist client, then refresh"),
+		row("r", "Refresh the view from the local cache"),
+		row("s", "Sync — push queued changes & pull updates"),
+		"",
+		head.Render("  Offline"),
+		row("", "Changes apply instantly to a local cache and queue up."),
+		row("", "Press s to push them; everything works offline until then."),
 		"",
 		head.Render("  In the task view"),
 		row("1-4", "Set priority (p1–p4)"),
-		row("t", "Set due date    l  set labels    e  edit name"),
+		row("t", "Set due date    D  set deadline    l  set labels    e  edit name"),
 		row("m", "Add a comment (view existing comments above)"),
 		row("c", "Complete    b/esc  back to the list"),
 		"",
@@ -1431,14 +1458,15 @@ func helpLines() []string {
 		row("P", "Filter by priority (pick p1–p4 from the menu)"),
 		row("o", "Ongoing — show all tasks tagged @ongoing"),
 		row("R", "Recently added — the last 10 tasks you created"),
-		row("/", "Search — plain words search locally; filters run server-side"),
+		row("/", "Search — plain words; or a local filter (today, #x & p1)"),
 		"",
 		head.Render("  Sort  (press the same number again to reverse)"),
 		row("1", "Priority (p1 → p4)"),
 		row("2", "Due date (soonest first, no-date last)"),
-		row("3", "Project (A → Z)"),
-		row("4", "Name (A → Z)"),
-		row("5", "Labels (A → Z)"),
+		row("3", "Deadline (soonest first, none last)"),
+		row("4", "Project (A → Z)"),
+		row("5", "Name (A → Z)"),
+		row("6", "Labels (A → Z)"),
 		row("0", "Default Todoist order"),
 		"",
 		head.Render("  Search tips"),
@@ -1537,21 +1565,33 @@ func (m model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) footer() string {
-	if m.err != "" {
-		return errStyle.Render("⚠ " + m.err)
-	}
-	keys := "a add · p project · P priority · o ongoing · R recent · / search · 1-5 sort · enter view · c done · s sync · H help · q quit"
+	// status line with sync state
 	st := m.status
-	if m.loading {
-		st = "⟳ " + st
+	if m.syncing {
+		st = "⟳ syncing… " + st
 	}
-	left := statusStyle.Render(st)
+	var badges []string
+	if n := len(m.queue); n > 0 {
+		badges = append(badges, lipgloss.NewStyle().Foreground(lipgloss.Color("#EB8909")).Render(fmt.Sprintf("●%d unsynced", n)))
+	}
+	if m.online {
+		badges = append(badges, lipgloss.NewStyle().Foreground(lipgloss.Color("#98C379")).Render("online"))
+	}
+	statusLine := statusStyle.Render(st)
+	if len(badges) > 0 {
+		statusLine = statusStyle.Render(st+"  ") + strings.Join(badges, statusStyle.Render(" · "))
+	}
+	if m.err != "" {
+		statusLine = errStyle.Render("⚠ " + m.err)
+	}
+
+	keys := "a add · p project · P priority · o ongoing · R recent · / search · 1-6 sort · enter view · c done · s sync · H help · q quit"
 	right := helpStyle.Render(keys)
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	gap := m.width - lipgloss.Width(statusLine) - lipgloss.Width(right)
 	if gap < 1 {
-		return lipgloss.JoinVertical(lipgloss.Left, left, right)
+		return lipgloss.JoinVertical(lipgloss.Left, statusLine, right)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, statusLine, strings.Repeat(" ", gap), right)
 }
 
 func main() {
@@ -1561,10 +1601,14 @@ func main() {
 			fmt.Println("todoui", version)
 			return
 		case "--help", "-h", "help":
-			fmt.Println("todoui — a terminal UI for Todoist (wraps the `todoist` CLI)")
+			fmt.Println("todoui — a terminal UI for Todoist (Sync API, offline-first)")
 			fmt.Println("Usage: todoui            start the UI")
+			fmt.Println("       todoui sync       flush queued changes + pull, headless")
 			fmt.Println("       todoui --version  print version")
 			fmt.Println("Press H inside the app for the keyboard reference.")
+			return
+		case "sync":
+			runHeadlessSync()
 			return
 		}
 	}
@@ -1572,4 +1616,21 @@ func main() {
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
 	}
+}
+
+// runHeadlessSync flushes the queue and pulls updates without the UI.
+func runHeadlessSync() {
+	cache := LoadCache()
+	queue := LoadQueue()
+	sent := len(queue)
+	resp, err := DoSync(cache.SyncToken, queue)
+	if err != nil {
+		fmt.Println("sync failed:", err)
+		os.Exit(1)
+	}
+	cache.Merge(resp)
+	cache.Save()
+	SaveQueue(nil)
+	fmt.Printf("synced: flushed %d change(s); %d tasks, %d projects cached\n",
+		sent, len(cache.Items), len(cache.Projects))
 }
