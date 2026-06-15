@@ -9,8 +9,8 @@ to the server when you sync. No `todoist` CLI required.
 
 ```
  ✓ Todoist   all tasks   ⇅ due date ↑
- ▌ p1  Pay Globe Westgrove
-     2026-06-05 09:00  ·  #Bills Payments  ·  @bills-payment
+ ▌ p1  Submit expense report
+     2026-06-05 09:00  ·  #Work  ·  @finance
    p4  Read a book
      #Personal
  added: Call plumber   ●1 unsynced · online      a add · / search · s sync · …
@@ -20,6 +20,8 @@ to the server when you sync. No `todoist` CLI required.
 
 ## Features
 
+- **Guided onboarding** — prompts for your API token on first run and validates it on
+  every launch (re-prompts if it's been revoked).
 - **Offline-first** — works fully offline from a local cache; changes queue up and push
   on `s` (sync). A background sync runs on startup when you're online.
 - **Browse** all tasks with priority-coloured markers (p1 red · p2 orange · p3 blue · p4 grey).
@@ -39,13 +41,20 @@ to the server when you sync. No `todoist` CLI required.
 
 ## Setup (API token)
 
-todoui needs your Todoist API token (Todoist → **Settings → Integrations → Developer →
-API token**). Provide it either way:
+On first run, todoui **onboards you**: if no token is found it prompts you to paste your
+Todoist API token (Todoist → **Settings → Integrations → Developer → API token**), then
+validates it before continuing. The token is saved to `~/.config/todoui/config.json`
+(and a copy to `~/.config/todoist/config.json` for CLI compatibility).
+
+You can also provide it up front:
 
 - **Env var:** `export TODOIST_API_TOKEN=<your token>`, or
-- **File:** `~/.config/todoist/config.json` containing `{"token": "<your token>"}`
-  (this is the same file the `sachaos/todoist` CLI uses, so if you have that CLI set up,
-  todoui works with no extra steps).
+- **File:** `~/.config/todoui/config.json` (or `~/.config/todoist/config.json`)
+  containing `{"token": "<your token>"}`.
+
+todoui looks for the token in that order: env var → `~/.config/todoui` →
+`~/.config/todoist`. **Every launch validates the token** and re-prompts if it's been
+revoked.
 
 Verify headlessly:
 
@@ -164,7 +173,7 @@ project. Type to fuzzy-filter · `↑`/`↓` to move · `Enter` to select · `Es
 The search bar (`/`) is **smart**:
 
 - **Plain words** → an instant, case-insensitive **local search** over task content,
-  project, and labels. It filters *live* as you type. e.g. `anvaya`, `pay globe`.
+  project, and labels. It filters *live* as you type. e.g. `groceries`, `call mom`.
 - **Filter expressions** → evaluated **locally** against the cache. Detected when your
   query uses operators (`|`, `&`, `!`, `#`, `@`, `(` `)`) or keywords. Supported subset:
   `today`, `overdue`, `no date`, `no deadline`, `deadline`, `recurring`, `@label`,
@@ -176,7 +185,7 @@ Press `Esc` to clear and return to all tasks.
 ### Add syntax (natural language)
 
 ```
-Pay Globe bill @bills-payment tomorrow 9am p1
+Pay electricity bill @bills tomorrow 9am p1
 Review PR every monday
 Dentist appointment next friday 3pm
 ```

@@ -80,15 +80,15 @@ func TestParseQuickAdd(t *testing.T) {
 		t.Fatalf("due = %q", q.DueString)
 	}
 	// plain task with no date/labels
-	q2 := parseQuickAdd("Pay Globe Anvaya")
-	if q2.Content != "Pay Globe Anvaya" || q2.DueString != "" {
+	q2 := parseQuickAdd("Buy groceries")
+	if q2.Content != "Buy groceries" || q2.DueString != "" {
 		t.Fatalf("plain parse wrong: %+v", q2)
 	}
 }
 
 func sampleTasks() []Task {
 	return []Task{
-		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay Globe", DueDate: "2026-06-15"},
+		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay rent", DueDate: "2026-06-15"},
 		{ID: "2", Priority: "p4", Project: "#Personal", Content: "Read a book"},
 	}
 }
@@ -215,7 +215,7 @@ func TestIsFilterExpr(t *testing.T) {
 			t.Errorf("%q should be detected as a filter expression", f)
 		}
 	}
-	texts := []string{"anvaya", "pay globe", "groceries", "call mom", "anvaya golf"}
+	texts := []string{"groceries", "call mom", "report", "gym session", "buy milk"}
 	for _, s := range texts {
 		if isFilterExpr(s) {
 			t.Errorf("%q should be treated as plain text search", s)
@@ -228,8 +228,8 @@ func TestLocalTextSearchFiltersTasks(t *testing.T) {
 	m.width, m.height = 100, 40
 	m.list.SetSize(100, 36)
 	tasks := []Task{
-		{ID: "1", Priority: "p4", Project: "#Bills", Content: "Pay anvaya golf dues"},
-		{ID: "2", Priority: "p4", Project: "#Bills", Content: "Pay Globe Anvaya"},
+		{ID: "1", Priority: "p4", Project: "#Bills", Content: "Submit quarterly report"},
+		{ID: "2", Priority: "p4", Project: "#Bills", Content: "Review report draft"},
 		{ID: "3", Priority: "p4", Project: "#Personal", Content: "Read a book"},
 	}
 	nm, _ := m.Update(tasksLoadedMsg{tasks: tasks})
@@ -240,11 +240,11 @@ func TestLocalTextSearchFiltersTasks(t *testing.T) {
 	// open search and type a plain word
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = nm.(model)
-	for _, r := range "anvaya" {
+	for _, r := range "report" {
 		nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = nm.(model)
 	}
-	// live preview should already narrow to the 2 anvaya tasks
+	// live preview should already narrow to the 2 matching tasks
 	if got := len(m.list.Items()); got != 2 {
 		t.Fatalf("live text search: want 2 items, got %d", got)
 	}
@@ -254,7 +254,7 @@ func TestLocalTextSearchFiltersTasks(t *testing.T) {
 	if m.mode != modeList {
 		t.Fatal("enter should return to list mode")
 	}
-	if m.textQuery != "anvaya" {
+	if m.textQuery != "report" {
 		t.Fatalf("textQuery = %q", m.textQuery)
 	}
 	if m.filter != "" {
@@ -281,8 +281,8 @@ func TestViewByProject(t *testing.T) {
 	}})
 	m = nm.(model)
 	nm, _ = m.Update(tasksLoadedMsg{tasks: []Task{
-		{ID: "1", Project: "#Bills", Content: "Pay Globe"},
-		{ID: "2", Project: "#Bills", Content: "Pay Cignal"},
+		{ID: "1", Project: "#Bills", Content: "Pay rent"},
+		{ID: "2", Project: "#Bills", Content: "Pay utilities"},
 		{ID: "3", Project: "#Personal", Content: "Read a book"},
 	}})
 	m = nm.(model)
@@ -353,8 +353,8 @@ func TestBackAndHomeNavigation(t *testing.T) {
 	nm, _ := m.Update(projectsLoadedMsg{projects: []Project{{ID: "b", Name: "#Bills"}}})
 	m = nm.(model)
 	nm, _ = m.Update(tasksLoadedMsg{tasks: []Task{
-		{ID: "1", Project: "#Bills", Content: "Pay Globe anvaya"},
-		{ID: "2", Project: "#Bills", Content: "Pay Cignal"},
+		{ID: "1", Project: "#Bills", Content: "Pay rent report"},
+		{ID: "2", Project: "#Bills", Content: "Pay utilities"},
 		{ID: "3", Project: "#Personal", Content: "Read a book"},
 	}})
 	m = nm.(model)
@@ -369,16 +369,16 @@ func TestBackAndHomeNavigation(t *testing.T) {
 		t.Fatalf("expected #Bills view with 2 items, got %q/%d", m.projectView, len(m.list.Items()))
 	}
 
-	// Then search "anvaya" within it
+	// Then search "report" within it
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("/")})
 	m = nm.(model)
-	for _, r := range "anvaya" {
+	for _, r := range "report" {
 		nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 		m = nm.(model)
 	}
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = nm.(model)
-	if m.textQuery != "anvaya" || m.projectView != "#Bills" || len(m.list.Items()) != 1 {
+	if m.textQuery != "report" || m.projectView != "#Bills" || len(m.list.Items()) != 1 {
 		t.Fatalf("search-in-project: got query=%q project=%q items=%d", m.textQuery, m.projectView, len(m.list.Items()))
 	}
 
@@ -406,6 +406,35 @@ func TestBackAndHomeNavigation(t *testing.T) {
 	m = nm.(model)
 	if m.projectView != "" || len(m.list.Items()) != 3 {
 		t.Fatalf("home: project=%q items=%d", m.projectView, len(m.list.Items()))
+	}
+}
+
+func TestTokenCheckedValidLeavesOnboard(t *testing.T) {
+	m := initialModel()
+	m.cache = newCache()
+	m.width, m.height = 100, 40
+	m.mode = modeOnboard
+	nm, cmd := m.Update(tokenCheckedMsg{valid: true})
+	mm := nm.(model)
+	if mm.mode != modeList {
+		t.Fatal("valid token should leave onboarding for the list")
+	}
+	if !mm.online {
+		t.Fatal("valid token should mark online")
+	}
+	if cmd == nil {
+		t.Fatal("valid token should trigger a sync")
+	}
+}
+
+func TestTokenCheckedAuthErrStaysOnboard(t *testing.T) {
+	m := initialModel()
+	m.cache = newCache()
+	m.width, m.height = 100, 40
+	m.mode = modeList
+	nm, _ := m.Update(tokenCheckedMsg{authErr: true})
+	if nm.(model).mode != modeOnboard {
+		t.Fatal("a rejected token should drop into onboarding")
 	}
 }
 
@@ -466,7 +495,7 @@ func TestEnterOpensDetail(t *testing.T) {
 	m.width, m.height = 100, 40
 	m.list.SetSize(100, 36)
 	nm, _ := m.Update(tasksLoadedMsg{tasks: []Task{
-		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay Globe", DueDate: "today", Labels: "@ongoing"},
+		{ID: "1", Priority: "p1", Project: "#Bills", Content: "Pay rent", DueDate: "today", Labels: "@ongoing"},
 	}})
 	m = nm.(model)
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -477,7 +506,7 @@ func TestEnterOpensDetail(t *testing.T) {
 	if m.detailID != "1" {
 		t.Fatalf("detailID = %q", m.detailID)
 	}
-	if !strings.Contains(m.View(), "Pay Globe") {
+	if !strings.Contains(m.View(), "Pay rent") {
 		t.Fatal("detail view should render the task content")
 	}
 	// open the date editor

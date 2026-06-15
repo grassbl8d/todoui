@@ -109,8 +109,23 @@ const syncURL = "https://api.todoist.com/api/v1/sync"
 
 var cachedToken string
 
-// Token reads the API token from $TODOIST_API_TOKEN or the file the Todoist CLI
-// stores at ~/.config/todoist/config.json.
+// tokenFromFile reads {"token":"…"} from a config.json path.
+func tokenFromFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		Token string `json:"token"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg.Token)
+}
+
+// Token reads the API token from, in order: $TODOIST_API_TOKEN,
+// ~/.config/todoui/config.json, then ~/.config/todoist/config.json.
 func Token() (string, error) {
 	if cachedToken != "" {
 		return cachedToken, nil
@@ -119,25 +134,100 @@ func Token() (string, error) {
 		cachedToken = t
 		return t, nil
 	}
+	if p := todouiConfigPath(); p != "" {
+		if t := tokenFromFile(p); t != "" {
+			cachedToken = t
+			return t, nil
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		if t := tokenFromFile(filepath.Join(home, ".config", "todoist", "config.json")); t != "" {
+			cachedToken = t
+			return t, nil
+		}
+	}
+	return "", fmt.Errorf("no token configured")
+}
+
+// todouiConfigPath is todoui's own config file (~/.config/todoui/config.json).
+func todouiConfigPath() string {
+	d := stateDir()
+	if d == "" {
+		return ""
+	}
+	return filepath.Join(d, "config.json")
+}
+
+// todoistConfigPath is where the token is stored (shared with the sachaos CLI).
+func todoistConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	b, err := os.ReadFile(filepath.Join(home, ".config", "todoist", "config.json"))
-	if err != nil {
-		return "", fmt.Errorf("no token: set TODOIST_API_TOKEN or create ~/.config/todoist/config.json {\"token\":\"…\"}")
-	}
-	var cfg struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(b, &cfg); err != nil {
+	dir := filepath.Join(home, ".config", "todoist")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if cfg.Token == "" {
-		return "", fmt.Errorf("empty token in ~/.config/todoist/config.json")
+	return filepath.Join(dir, "config.json"), nil
+}
+
+// SaveToken writes the token to todoui's config (~/.config/todoui/config.json)
+// and, for CLI compatibility, also to ~/.config/todoist/config.json.
+func SaveToken(t string) error {
+	t = strings.TrimSpace(t)
+	if t == "" {
+		return fmt.Errorf("empty token")
 	}
-	cachedToken = cfg.Token
-	return cfg.Token, nil
+	b, _ := json.Marshal(map[string]string{"token": t})
+	wrote := false
+	if p := todouiConfigPath(); p != "" {
+		if os.WriteFile(p, b, 0o600) == nil {
+			wrote = true
+		}
+	}
+	if p, err := todoistConfigPath(); err == nil {
+		_ = os.WriteFile(p, b, 0o600) // best-effort CLI compatibility copy
+		wrote = true
+	}
+	if !wrote {
+		return fmt.Errorf("could not write token file")
+	}
+	cachedToken = t
+	return nil
+}
+
+// HasToken reports whether a token is configured (env or file).
+func HasToken() bool {
+	_, err := Token()
+	return err == nil
+}
+
+// ValidateToken makes a cheap authenticated call. Returns (valid, authErr):
+// authErr=true means the token was rejected (401/403); a network error returns
+// (false,false) so callers can stay offline rather than force re-onboarding.
+func ValidateToken() (valid bool, authErr bool) {
+	token, err := Token()
+	if err != nil {
+		return false, true
+	}
+	req, err := http.NewRequest("GET", "https://api.todoist.com/api/v1/projects?limit=1", nil)
+	if err != nil {
+		return false, false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return false, false // network/offline
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == 200:
+		return true, false
+	case resp.StatusCode == 401 || resp.StatusCode == 403:
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 // ---------- raw API model ----------

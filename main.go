@@ -180,6 +180,7 @@ const (
 	modeDetailEdit   // editing one field of the task in detail view
 	modeCommentAdd   // writing a new comment in the detail view
 	modePriorityPick // choosing a priority to filter by
+	modeOnboard      // first-run / invalid-token: prompt for the API token
 )
 
 // editField is which task field the detail editor is changing.
@@ -269,6 +270,8 @@ type model struct {
 	commentErr   string     // error from the last comment fetch/post
 	recentView   bool       // showing the recently-added tasks
 	recentIDs    []string   // task IDs in recently-added order
+	onboardErr   string     // error shown on the onboarding screen
+	checking     bool       // validating the token
 	helpOffset   int        // scroll offset of the help page
 	addProject   Project    // project chosen for the task currently being added
 	recents      []Project  // recently-chosen projects, most recent first (persisted)
@@ -288,6 +291,10 @@ type syncResultMsg struct {
 	resp *syncResponse
 	sent int // number of queued commands that were flushed
 	err  error
+}
+type tokenCheckedMsg struct {
+	valid   bool
+	authErr bool // token rejected (vs. just offline)
 }
 type errMsg struct{ err error }
 type actionMsg struct{ status string }
@@ -325,15 +332,35 @@ func initialModel() model {
 		status:   "ready",
 	}
 	m.deriveAll()
+	if !HasToken() {
+		m.beginOnboard("Welcome! Paste your Todoist API token to get started.")
+	}
 	return m
 }
 
+// beginOnboard switches to the token-entry screen.
+func (m *model) beginOnboard(msg string) {
+	m.mode = modeOnboard
+	m.onboardErr = msg
+	m.input.EchoMode = textinput.EchoPassword
+	m.input.Placeholder = "Todoist API token"
+	m.input.SetValue("")
+	m.input.Focus()
+}
+
 func (m model) Init() tea.Cmd {
-	// Cache is already shown; do one background sync if we have a token.
-	if _, err := Token(); err != nil {
-		return nil
+	if m.mode == modeOnboard {
+		return textinput.Blink // wait for the token
 	}
-	return syncNowCmd(m.cache.SyncToken, m.queue)
+	// Validate the configured token at startup, then sync.
+	return checkTokenCmd()
+}
+
+func checkTokenCmd() tea.Cmd {
+	return func() tea.Msg {
+		valid, authErr := ValidateToken()
+		return tokenCheckedMsg{valid: valid, authErr: authErr}
+	}
 }
 
 // syncNowCmd flushes the queue and pulls updates in the background.
@@ -708,6 +735,41 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = m.scopeStatus()
 		return m, nil
 
+	case tokenCheckedMsg:
+		m.checking = false
+		switch {
+		case msg.valid:
+			m.online = true
+			wasOnboard := m.mode == modeOnboard
+			if wasOnboard {
+				m.mode = modeList
+				m.input.EchoMode = textinput.EchoNormal
+				m.input.Blur()
+				m.onboardErr = ""
+			}
+			m.status = "token OK — syncing…"
+			m.syncing = true
+			return m, syncNowCmd(m.cache.SyncToken, m.queue)
+		case msg.authErr:
+			// token rejected → (re)onboard
+			m.beginOnboard("That token was rejected. Paste a valid Todoist API token.")
+			return m, textinput.Blink
+		default:
+			// network error: can't validate now
+			m.online = false
+			if m.mode == modeOnboard {
+				// token saved but offline — let them in; it'll verify on sync
+				m.mode = modeList
+				m.input.EchoMode = textinput.EchoNormal
+				m.input.Blur()
+				m.onboardErr = ""
+				m.status = "offline — token saved, will verify on next sync"
+			} else {
+				m.status = "offline — using cached data"
+			}
+			return m, nil
+		}
+
 	case syncResultMsg:
 		m.syncing = false
 		if msg.err != nil {
@@ -761,6 +823,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateCommentAdd(msg)
 		case modePriorityPick:
 			return m.updatePriorityPick(msg)
+		case modeOnboard:
+			return m.updateOnboard(msg)
 		}
 	}
 
@@ -1212,6 +1276,30 @@ func (m model) updateDetailEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateOnboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c", "esc":
+		return m, tea.Quit
+	case "enter":
+		val := strings.TrimSpace(m.input.Value())
+		if val == "" {
+			m.onboardErr = "Please paste a token (or Esc to quit)."
+			return m, nil
+		}
+		if err := SaveToken(val); err != nil {
+			m.onboardErr = "Couldn't save token: " + err.Error()
+			return m, nil
+		}
+		m.onboardErr = "Checking token…"
+		m.checking = true
+		m.input.SetValue("")
+		return m, checkTokenCmd()
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return m, cmd
+}
+
 func (m model) updateConfirm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y", "enter":
@@ -1262,6 +1350,10 @@ func (m model) View() string {
 		scope += lipgloss.NewStyle().Foreground(dimColor).Render(fmt.Sprintf("   ⇅ %s %s", m.sortMode.label(), dir))
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Center, title, statusStyle.Render(scope))
+
+	if m.mode == modeOnboard {
+		return m.onboardView(header)
+	}
 
 	if m.mode == modeHelp {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.helpView())
@@ -1329,6 +1421,36 @@ func (m model) View() string {
 		return lipgloss.JoinVertical(lipgloss.Left, header, body, listView, footer)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, listView, footer)
+}
+
+// onboardView renders the first-run / invalid-token token entry screen.
+func (m model) onboardView(header string) string {
+	dim := lipgloss.NewStyle().Foreground(subColor)
+	accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	lines := []string{
+		"",
+		"  " + accent.Render("Connect to Todoist"),
+		"",
+		"  " + dim.Render("Get your API token from Todoist →"),
+		"  " + dim.Render("Settings → Integrations → Developer → API token."),
+		"  " + dim.Render("It's saved to ~/.config/todoui/config.json."),
+		"",
+	}
+	if m.checking {
+		lines = append(lines, "  "+statusStyle.Render("⟳ checking token…"))
+	} else {
+		box := promptBox.Width(min(m.width-4, 64)).Render(accent.Render("Token  ") + m.input.View())
+		lines = append(lines, box)
+	}
+	if m.onboardErr != "" {
+		style := dim
+		if strings.Contains(strings.ToLower(m.onboardErr), "reject") || strings.Contains(m.onboardErr, "Couldn't") {
+			style = lipgloss.NewStyle().Foreground(brandRed)
+		}
+		lines = append(lines, "", "  "+style.Render(m.onboardErr))
+	}
+	lines = append(lines, "", helpStyle.Render("  enter save & check · esc quit"))
+	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, lines...)...)
 }
 
 // detailView renders the single-task detail / edit screen.
@@ -1470,7 +1592,7 @@ func helpLines() []string {
 		row("0", "Default Todoist order"),
 		"",
 		head.Render("  Search tips"),
-		row("plain text", "anvaya, pay globe — instant local search of name/project/labels"),
+		row("plain text", "groceries, call mom — instant local search of name/project/labels"),
 		row("filters", "today | overdue, #Personal & p1, @follow-up — Todoist syntax"),
 		"",
 		head.Render("  Add syntax (natural language)"),
