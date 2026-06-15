@@ -409,6 +409,59 @@ func TestBackAndHomeNavigation(t *testing.T) {
 	}
 }
 
+func TestProjectPickerTypeToFilter(t *testing.T) {
+	m := initialModel()
+	m.recents = nil
+	m.width, m.height = 100, 40
+	m.projList.SetSize(100, 36)
+	nm, _ := m.Update(projectsLoadedMsg{projects: []Project{
+		{ID: "1", Name: "#Personal"},
+		{ID: "2", Name: "#Bills"},
+		{ID: "3", Name: "#Bizlink"},
+	}})
+	m = nm.(model)
+	// open the picker
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("p")})
+	m = nm.(model)
+	// type "biz" → only #Bizlink matches
+	for _, r := range "biz" {
+		nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = nm.(model)
+	}
+	if m.projQuery != "biz" {
+		t.Fatalf("projQuery = %q", m.projQuery)
+	}
+	if got := len(m.projList.Items()); got != 1 {
+		t.Fatalf("filter 'biz' should leave 1 project, got %d", got)
+	}
+	// backspace widens to "bi" → #Bills and #Bizlink
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyBackspace})
+	m = nm.(model)
+	if got := len(m.projList.Items()); got != 2 {
+		t.Fatalf("filter 'bi' should leave 2 projects, got %d", got)
+	}
+	// esc clears the filter, restoring the full list (+ All Projects in view mode)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = nm.(model)
+	if m.projQuery != "" || m.mode != modeProjectPick {
+		t.Fatal("first esc should clear the filter, not close the picker")
+	}
+}
+
+func TestClearDataDialogCancel(t *testing.T) {
+	m := initialModel()
+	m.width, m.height = 100, 40
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("X")})
+	m = nm.(model)
+	if m.mode != modeClearData {
+		t.Fatal("X should open the clear-data confirmation")
+	}
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	if nm.(model).mode != modeList {
+		t.Fatal("n should cancel and return to the list")
+	}
+}
+
 func TestTokenCheckedValidLeavesOnboard(t *testing.T) {
 	m := initialModel()
 	m.cache = newCache()

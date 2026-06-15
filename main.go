@@ -90,6 +90,9 @@ func (d taskDelegate) Render(w io.Writer, m list.Model, index int, item list.Ite
 	if strings.TrimSpace(t.DueDate) != "" {
 		meta = append(meta, lipgloss.NewStyle().Foreground(lipgloss.Color("#E5C07B")).Render(t.DueDate))
 	}
+	if strings.TrimSpace(t.Deadline) != "" {
+		meta = append(meta, lipgloss.NewStyle().Foreground(lipgloss.Color("#E06C75")).Render("⚑ "+t.Deadline))
+	}
 	if strings.TrimSpace(t.Labels) != "" {
 		meta = append(meta, lipgloss.NewStyle().Foreground(lipgloss.Color("#98C379")).Render(t.Labels))
 	}
@@ -181,6 +184,7 @@ const (
 	modeCommentAdd   // writing a new comment in the detail view
 	modePriorityPick // choosing a priority to filter by
 	modeOnboard      // first-run / invalid-token: prompt for the API token
+	modeClearData    // confirm clearing token + cache + queue
 )
 
 // editField is which task field the detail editor is changing.
@@ -272,6 +276,7 @@ type model struct {
 	recentIDs    []string   // task IDs in recently-added order
 	onboardErr   string     // error shown on the onboarding screen
 	checking     bool       // validating the token
+	projQuery    string     // type-to-filter text in the project picker
 	helpOffset   int        // scroll offset of the help page
 	addProject   Project    // project chosen for the task currently being added
 	recents      []Project  // recently-chosen projects, most recent first (persisted)
@@ -312,8 +317,8 @@ func initialModel() model {
 	pl.SetShowTitle(false)
 	pl.SetShowStatusBar(false)
 	pl.SetShowHelp(false)
-	pl.SetFilteringEnabled(true)
-	pl.SetShowFilter(true)
+	pl.SetFilteringEnabled(false) // we run our own type-to-filter
+	pl.SetShowFilter(false)
 	pl.DisableQuitKeybindings()
 
 	ti := textinput.New()
@@ -825,6 +830,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePriorityPick(msg)
 		case modeOnboard:
 			return m.updateOnboard(msg)
+		case modeClearData:
+			return m.updateClearData(msg)
 		}
 	}
 
@@ -843,6 +850,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeProjectPick
 		m.pickIntent = pickAdd
 		m.err = ""
+		m.projQuery = ""
 		m.setPickerItems()
 		m.selectLastProject()
 		return m, nil
@@ -851,6 +859,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeProjectPick
 		m.pickIntent = pickView
 		m.err = ""
+		m.projQuery = ""
 		m.setPickerItems()
 		m.selectLastProject()
 		return m, nil
@@ -859,6 +868,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.recents) == 0 {
 			m.mode = modeProjectPick
 			m.pickIntent = pickAdd
+			m.projQuery = ""
 			m.setPickerItems()
 			m.selectLastProject()
 			return m, nil
@@ -949,6 +959,9 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeHelp
 		m.helpOffset = 0
 		return m, nil
+	case "X":
+		m.mode = modeClearData
+		return m, nil
 	case "1":
 		m.setSort(sortPriority)
 		return m, nil
@@ -1005,6 +1018,16 @@ const allProjectsID = "__all__"
 // all projects.
 func (m *model) setPickerItems() {
 	var items []list.Item
+	// When filtering, show a flat list of matching projects only.
+	if q := strings.ToLower(strings.TrimSpace(m.projQuery)); q != "" {
+		for _, p := range m.projects {
+			if strings.Contains(strings.ToLower(p.Name), q) {
+				items = append(items, projItem{p: p, kind: kindProject})
+			}
+		}
+		m.projList.SetItems(items)
+		return
+	}
 	if m.pickIntent == pickView {
 		items = append(items, projItem{p: Project{ID: allProjectsID, Name: "↩ All Projects"}, kind: kindAllProjects})
 	}
@@ -1082,24 +1105,33 @@ func (m model) updatePriorityPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateProjectPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// While filtering, let the list consume keys (incl. enter/esc).
-	if m.projList.FilterState() == list.Filtering {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		if m.projQuery != "" { // first esc clears the filter
+			m.projQuery = ""
+			m.setPickerItems()
+			return m, nil
+		}
+		m.mode = modeList
+		return m, nil
+	case "up", "down", "ctrl+p", "ctrl+n", "pgup", "pgdown":
 		var cmd tea.Cmd
 		m.projList, cmd = m.projList.Update(msg)
 		return m, cmd
-	}
-	switch msg.String() {
-	case "esc":
-		m.mode = modeList
+	case "backspace":
+		if m.projQuery != "" {
+			r := []rune(m.projQuery)
+			m.projQuery = string(r[:len(r)-1])
+			m.setPickerItems()
+			m.projList.Select(0)
+		}
 		return m, nil
 	case "enter":
 		it, ok := m.projList.SelectedItem().(projItem)
-		if !ok {
-			m.mode = modeList
-			return m, nil
-		}
-		if it.kind == kindSep {
-			return m, nil // separator isn't selectable
+		if !ok || it.kind == kindSep {
+			return m, nil // nothing selectable
 		}
 		if m.pickIntent == pickView {
 			m.mode = modeList
@@ -1120,9 +1152,13 @@ func (m model) updateProjectPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	}
-	var cmd tea.Cmd
-	m.projList, cmd = m.projList.Update(msg)
-	return m, cmd
+	// Any printable input narrows the list (type-to-filter).
+	if len(msg.Runes) > 0 {
+		m.projQuery += string(msg.Runes)
+		m.setPickerItems()
+		m.projList.Select(0)
+	}
+	return m, nil
 }
 
 func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1276,6 +1312,31 @@ func (m model) updateDetailEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) updateClearData(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		// Clear everything local: token files, cache, and queued changes.
+		ClearToken()
+		ClearLocalData()
+		m.cache = newCache()
+		m.queue = nil
+		m.online = false
+		m.history = nil
+		m.current = viewState{}
+		m.deriveAll()
+		if TokenFromEnv() {
+			m.mode = modeList
+			m.status = "cleared cache & saved token (but $TODOIST_API_TOKEN is still set)"
+			return m, nil
+		}
+		m.beginOnboard("All local data cleared. Paste a Todoist API token to reconnect.")
+		return m, textinput.Blink
+	default:
+		m.mode = modeList
+		return m, nil
+	}
+}
+
 func (m model) updateOnboard(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "esc":
@@ -1391,8 +1452,12 @@ func (m model) View() string {
 		if m.pickIntent == pickView {
 			prompt = "View which project?"
 		}
-		hint := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(prompt)
-		help := helpStyle.Render("type to filter · enter select · esc cancel")
+		line := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(prompt)
+		if m.projQuery != "" {
+			line += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("#E5C07B")).Render("filter: "+m.projQuery+"▌")
+		}
+		hint := line
+		help := helpStyle.Render("type to filter · ↑/↓ move · enter select · esc clear/cancel")
 		picker := lipgloss.JoinVertical(lipgloss.Left, hint, m.projList.View(), help)
 		return lipgloss.JoinVertical(lipgloss.Left, header, picker)
 	case modeAdd:
@@ -1411,6 +1476,15 @@ func (m model) View() string {
 		q := lipgloss.NewStyle().Foreground(brandRed).Bold(true).
 			Render(fmt.Sprintf("Delete \"%s\"?  (y/n)", t.Content))
 		body = promptBox.Width(m.width - 4).Render(q)
+	case modeClearData:
+		q := lipgloss.NewStyle().Foreground(brandRed).Bold(true).
+			Render("Clear all local data — token, cache & queued changes?  (y/n)")
+		warn := ""
+		if n := len(m.queue); n > 0 {
+			warn = lipgloss.NewStyle().Foreground(lipgloss.Color("#EB8909")).
+				Render(fmt.Sprintf("  ⚠ %d unsynced change(s) will be lost — sync first to keep them.", n))
+		}
+		body = promptBox.Width(m.width - 4).Render(q + warn)
 	}
 
 	listView := m.list.View()
@@ -1568,6 +1642,7 @@ func helpLines() []string {
 		head.Render("  Offline"),
 		row("", "Changes apply instantly to a local cache and queue up."),
 		row("", "Press s to push them; everything works offline until then."),
+		row("X", "Clear data — remove token, cache & queue (asks first)"),
 		"",
 		head.Render("  In the task view"),
 		row("1-4", "Set priority (p1–p4)"),
@@ -1707,7 +1782,7 @@ func (m model) footer() string {
 		statusLine = errStyle.Render("⚠ " + m.err)
 	}
 
-	keys := "a add · p project · P priority · o ongoing · R recent · / search · 1-6 sort · enter view · c done · s sync · H help · q quit"
+	keys := "a add · p project · P priority · o ongoing · R recent · / search · 1-6 sort · enter view · c done · s sync · X clear · H help · q quit"
 	right := helpStyle.Render(keys)
 	gap := m.width - lipgloss.Width(statusLine) - lipgloss.Width(right)
 	if gap < 1 {

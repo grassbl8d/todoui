@@ -202,6 +202,30 @@ func HasToken() bool {
 	return err == nil
 }
 
+// ClearToken removes the saved token files and clears the cached token.
+// (It cannot unset $TODOIST_API_TOKEN — that takes precedence if present.)
+func ClearToken() {
+	cachedToken = ""
+	if p := todouiConfigPath(); p != "" {
+		_ = os.Remove(p)
+	}
+	if p, err := todoistConfigPath(); err == nil {
+		_ = os.Remove(p)
+	}
+}
+
+// TokenFromEnv reports whether the token comes from the environment (which
+// ClearToken can't remove).
+func TokenFromEnv() bool {
+	return strings.TrimSpace(os.Getenv("TODOIST_API_TOKEN")) != ""
+}
+
+// ClearLocalData removes the cached snapshot and the pending-command queue.
+func ClearLocalData() {
+	_ = os.Remove(cachePath())
+	_ = os.Remove(queuePath())
+}
+
 // ValidateToken makes a cheap authenticated call. Returns (valid, authErr):
 // authErr=true means the token was rejected (401/403); a network error returns
 // (false,false) so callers can stay offline rather than force re-onboarding.

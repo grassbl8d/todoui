@@ -5,7 +5,7 @@ A fast, colourful **terminal UI for [Todoist](https://todoist.com)**, built in G
 
 It talks to Todoist directly over the **Sync API** and is **offline-first**: it keeps a
 local cache on disk, applies your changes instantly, queues them, and pushes everything
-to the server when you sync. No `todoist` CLI required.
+to the server when you sync.
 
 ```
  ✓ Todoist   all tasks   ⇅ due date ↑
@@ -144,6 +144,7 @@ entirely from the keyboard.
 | `h` / `Esc`     | **Home** — back to all tasks / all projects                  |
 | `r`             | Refresh the view from the local cache                       |
 | `s`             | **Sync** — push queued changes & pull updates               |
+| `X`             | **Clear data** — remove token, cache & queue (asks first)    |
 | `H` / `?`       | **Help** — open the (scrollable) keyboard reference          |
 | `q` / `Ctrl+C`  | Quit                                                         |
 
@@ -166,7 +167,8 @@ comments. From there:
 #### In the project picker (used by both `a` and `p`)
 Your **3 most recently chosen projects** appear at the top (in gold, marked `★`),
 then a separator, then all projects (blue). The cursor starts on your most recent
-project. Type to fuzzy-filter · `↑`/`↓` to move · `Enter` to select · `Esc` to cancel.
+project. **Just start typing to filter** the list down · `↑`/`↓` to move ·
+`Enter` to select · `Esc` clears the filter (or closes the picker).
 
 ### Searching
 
