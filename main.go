@@ -15,8 +15,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
+// version is the default shown in-app; release builds override it with
+// -ldflags "-X main.version=vX.Y.Z". Bump this when cutting a new version.
+var version = "v0.1.1"
 
 // ---------- styling ----------
 
@@ -1722,7 +1723,13 @@ func (m model) View() string {
 		}
 		scope += lipgloss.NewStyle().Foreground(dimColor).Render(fmt.Sprintf("   ⇅ %s %s", m.sortMode.label(), dir))
 	}
-	header := lipgloss.JoinHorizontal(lipgloss.Center, title, statusStyle.Render(scope))
+	left := lipgloss.JoinHorizontal(lipgloss.Center, title, statusStyle.Render(scope))
+	ver := lipgloss.NewStyle().Foreground(dimColor).Render("todo-ui " + version + " ")
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(ver)
+	header := left
+	if gap > 1 {
+		header = lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", gap), ver)
+	}
 
 	if m.mode == modeOnboard {
 		return m.onboardView(header)

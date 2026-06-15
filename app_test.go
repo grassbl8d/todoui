@@ -823,6 +823,15 @@ func TestDeadlineAndTodayFilters(t *testing.T) {
 	}
 }
 
+func TestVersionShownInHeader(t *testing.T) {
+	m := initialModel()
+	m.width, m.height = 120, 40
+	m.list.SetSize(120, 36)
+	if !strings.Contains(m.View(), "todo-ui "+version) {
+		t.Fatal("header should show the todo-ui version")
+	}
+}
+
 func TestViewRendersWithoutPanic(t *testing.T) {
 	m := initialModel()
 	m.width, m.height = 100, 40
