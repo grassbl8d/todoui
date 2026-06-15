@@ -27,8 +27,12 @@ so it reuses your existing authentication and local cache. No API token wiring r
   hit `Enter`.
 - **`A` shortcut** — add straight to the *last project* you picked, skipping the picker.
   Your last project is remembered across restarts.
-- **Search / filter** with the full [Todoist filter syntax](https://todoist.com/help/articles/205248842)
-  (`today | overdue`, `#Personal & p1`, `@follow-up`, `search: globe`).
+- **Smart search** — type plain words for an instant **local text search** over task
+  name / project / labels (filters live as you type), or type a real
+  [Todoist filter](https://todoist.com/help/articles/205248842)
+  (`today | overdue`, `#Personal & p1`, `@follow-up`) to run it server-side.
+- **View by Project** — press `p`, pick a project from the list, and the view narrows
+  to just that project's tasks.
 - **Complete**, **delete** (with confirmation), and **sync + refresh** — all from the keyboard.
 
 ---
@@ -122,16 +126,34 @@ entirely from the keyboard.
 | `↑` / `↓` `j`/`k` | Move selection                                             |
 | `a`             | Add a task — opens the **project picker** first              |
 | `A`             | Add a task straight to the **last project** (skip picker)    |
-| `/`             | Search / filter (Todoist filter syntax)                      |
+| `p`             | **View by project** — pick a project to filter the list      |
+| `/`             | Search — plain words (local text search) or a Todoist filter |
 | `Enter` / `c`   | Complete the selected task                                   |
 | `d`             | Delete the selected task (asks `y`/`n`)                      |
 | `r`             | Sync + refresh                                               |
-| `Esc`           | Clear the active filter (or cancel a prompt)                 |
+| `Esc`           | Clear the active search / project view / filter (or cancel a prompt) |
 | `q` / `Ctrl+C`  | Quit                                                         |
 
-#### In the project picker
+#### In the project picker (used by both `a` and `p`)
 Type to fuzzy-filter the list · `↑`/`↓` to move · `Enter` to select · `Esc` to cancel.
 The cursor starts on your last-used project.
+
+### Searching
+
+The search bar (`/`) is **smart**:
+
+- **Plain words** → an instant, case-insensitive **local search** over task content,
+  project, and labels. It filters *live* as you type. e.g. `anvaya`, `pay globe`.
+- **Filter expressions** → run server-side via the `todoist` CLI. Detected when your
+  query uses operators (`|`, `&`, `#`, `@`, …) or keywords (`today`, `overdue`,
+  `p1`, `7 days`, …). e.g. `today | overdue`, `#Personal & p1`.
+
+Press `Esc` to clear and return to all tasks.
+
+### Viewing one project
+
+Press `p`, choose a project (type to narrow the list), and the task view filters to that
+project. You can stack a text search on top with `/`. Press `Esc` to clear.
 
 ### Add syntax (Todoist quick-add)
 

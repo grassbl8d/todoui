@@ -132,13 +132,25 @@ const (
 	modeProjectPick
 )
 
+// pickIntent distinguishes why the project picker is open.
+type pickIntent int
+
+const (
+	pickAdd  pickIntent = iota // choosing a project to add a task into
+	pickView                   // choosing a project to filter the view by
+)
+
 type model struct {
 	list        list.Model
 	projList    list.Model
 	input       textinput.Model
 	mode        mode
-	filter      string  // active server-side filter
-	addProject  Project // project chosen for the task currently being added
+	pickIntent  pickIntent // what the project picker is for (add vs view)
+	allTasks    []Task     // full set from the last server load
+	filter      string     // active server-side Todoist filter
+	textQuery   string     // local case-insensitive text search over loaded tasks
+	projectView string     // local filter: show only this project (display name, e.g. "#Bills")
+	addProject  Project    // project chosen for the task currently being added
 	lastProject Project // most recently used project (remembered across runs)
 	status      string
 	err         string
@@ -276,12 +288,49 @@ func (m *model) selectedTask() (Task, bool) {
 	return it.t, true
 }
 
-func (m *model) setTasks(tasks []Task) {
-	items := make([]list.Item, len(tasks))
-	for i, t := range tasks {
-		items[i] = taskItem{t}
+// applyView rebuilds the visible list from allTasks, narrowed by the local
+// text query (case-insensitive substring over content, project and labels).
+func (m *model) applyView() {
+	q := strings.ToLower(strings.TrimSpace(m.textQuery))
+	var items []list.Item
+	for _, t := range m.allTasks {
+		if m.projectView != "" && t.Project != m.projectView {
+			continue
+		}
+		if q != "" {
+			hay := strings.ToLower(t.Content + " " + t.Project + " " + t.Labels)
+			if !strings.Contains(hay, q) {
+				continue
+			}
+		}
+		items = append(items, taskItem{t})
 	}
 	m.list.SetItems(items)
+}
+
+// isFilterExpr reports whether a search string looks like a Todoist filter
+// expression (operators or known keywords) rather than plain search text.
+func isFilterExpr(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	if strings.ContainsAny(s, "|&!#@():") {
+		return true
+	}
+	low := strings.ToLower(s)
+	keywords := []string{
+		"today", "tomorrow", "yesterday", "overdue", "recurring",
+		"no date", "no time", "no label", "no priority", "no due",
+		"due", "date", "before", "after", "days", "weeks", "week",
+		"assigned", "shared", "subtask", "p1", "p2", "p3", "p4",
+	}
+	for _, k := range keywords {
+		if low == k || strings.HasPrefix(low, k+" ") || strings.Contains(low, " "+k+" ") || strings.HasSuffix(low, " "+k) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -303,10 +352,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tasksLoadedMsg:
 		m.loading = false
 		m.filter = msg.filter
-		m.setTasks(msg.tasks)
-		if m.status == "loading…" || m.status == "" {
-			m.status = fmt.Sprintf("%d tasks", len(msg.tasks))
-		}
+		m.allTasks = msg.tasks
+		m.applyView()
+		m.status = fmt.Sprintf("%d tasks", len(m.list.Items()))
 		return m, nil
 
 	case actionMsg:
@@ -345,6 +393,14 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		// Open the project picker, pre-selecting the last-used project.
 		m.mode = modeProjectPick
+		m.pickIntent = pickAdd
+		m.err = ""
+		m.selectLastProject()
+		return m, nil
+	case "p":
+		// View-by-project: prompt with the project list, then filter to it.
+		m.mode = modeProjectPick
+		m.pickIntent = pickView
 		m.err = ""
 		m.selectLastProject()
 		return m, nil
@@ -352,6 +408,7 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Fast path: add straight to the last-used project, skipping the picker.
 		if m.lastProject.ID == "" {
 			m.mode = modeProjectPick
+			m.pickIntent = pickAdd
 			m.selectLastProject()
 			return m, nil
 		}
@@ -365,8 +422,13 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode = modeSearch
 		m.err = ""
-		m.input.Placeholder = "today | overdue | #Personal | search words…"
-		m.input.SetValue(m.filter)
+		m.input.Placeholder = "type words to search · or a Todoist filter (today, #Personal, @label)"
+		prefill := m.textQuery
+		if m.filter != "" {
+			prefill = m.filter
+		}
+		m.input.SetValue(prefill)
+		m.input.CursorEnd()
 		m.input.Focus()
 		return m, textinput.Blink
 	case "c", "enter":
@@ -383,10 +445,20 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.status = "refreshing…"
 		return m, tea.Sequence(syncCmd(), loadTasks(m.filter))
 	case "esc":
-		if m.filter != "" {
+		if m.filter == "" && (m.textQuery != "" || m.projectView != "") {
+			// purely local narrowing — clear instantly, no reload needed
+			m.textQuery = ""
+			m.projectView = ""
+			m.applyView()
+			m.status = fmt.Sprintf("%d tasks", len(m.list.Items()))
+			return m, nil
+		}
+		if m.filter != "" || m.textQuery != "" || m.projectView != "" {
 			m.filter = ""
+			m.textQuery = ""
+			m.projectView = ""
 			m.loading = true
-			m.status = "cleared filter"
+			m.status = "cleared"
 			return m, loadTasks("")
 		}
 	}
@@ -427,11 +499,23 @@ func (m model) updateProjectPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mode = modeList
 		return m, nil
 	case "enter":
-		if it, ok := m.projList.SelectedItem().(projItem); ok {
-			m.addProject = it.p
-			m.lastProject = it.p
-			SaveLastProject(it.p)
+		it, ok := m.projList.SelectedItem().(projItem)
+		if !ok {
+			m.mode = modeList
+			return m, nil
 		}
+		if m.pickIntent == pickView {
+			// Filter the current view to the chosen project (local).
+			m.mode = modeList
+			m.projectView = it.p.Name
+			m.applyView()
+			m.status = fmt.Sprintf("%s — %d", it.p.Name, len(m.list.Items()))
+			return m, nil
+		}
+		// pickAdd: remember the project and move to the add input.
+		m.addProject = it.p
+		m.lastProject = it.p
+		SaveLastProject(it.p)
 		m.mode = modeAdd
 		m.input.Placeholder = "Buy milk @errand tomorrow 9am p1"
 		m.input.SetValue("")
@@ -463,18 +547,35 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case modeSearch:
 			m.mode = modeList
 			m.input.Blur()
-			m.filter = val
-			m.loading = true
-			if val == "" {
-				m.status = "all tasks"
-			} else {
+			if isFilterExpr(val) {
+				// power query → server-side Todoist filter
+				m.filter = val
+				m.textQuery = ""
+				m.loading = true
 				m.status = "filter: " + val
+				return m, loadTasks(val)
 			}
-			return m, loadTasks(val)
+			// plain words → local text search over loaded tasks
+			m.textQuery = val
+			m.applyView()
+			if val == "" {
+				m.status = fmt.Sprintf("%d tasks", len(m.list.Items()))
+			} else {
+				m.status = fmt.Sprintf("search “%s” — %d", val, len(m.list.Items()))
+			}
+			return m, nil
 		}
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	// Live local preview while typing a plain-text search.
+	if m.mode == modeSearch {
+		cur := m.input.Value()
+		if !isFilterExpr(cur) {
+			m.textQuery = cur
+			m.applyView()
+		}
+	}
 	return m, cmd
 }
 
@@ -503,13 +604,28 @@ func (m model) View() string {
 	scope := "  all tasks"
 	if m.filter != "" {
 		scope = "  filter: " + m.filter
+	} else {
+		var parts []string
+		if m.projectView != "" {
+			parts = append(parts, "project: "+m.projectView)
+		}
+		if m.textQuery != "" {
+			parts = append(parts, "search: "+m.textQuery)
+		}
+		if len(parts) > 0 {
+			scope = "  " + strings.Join(parts, " · ")
+		}
 	}
 	header := lipgloss.JoinHorizontal(lipgloss.Center, title, statusStyle.Render(scope))
 
 	var body string
 	switch m.mode {
 	case modeProjectPick:
-		hint := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Add to which project?")
+		prompt := "Add to which project?"
+		if m.pickIntent == pickView {
+			prompt = "View which project?"
+		}
+		hint := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(prompt)
 		help := helpStyle.Render("type to filter · enter select · esc cancel")
 		picker := lipgloss.JoinVertical(lipgloss.Left, hint, m.projList.View(), help)
 		return lipgloss.JoinVertical(lipgloss.Left, header, picker)
@@ -545,7 +661,7 @@ func (m model) footer() string {
 	if m.err != "" {
 		return errStyle.Render("⚠ " + m.err)
 	}
-	keys := "a add · A add→last · / search · enter/c done · d del · r refresh · q quit"
+	keys := "a add · A add→last · p project · / search · enter/c done · d del · r refresh · q quit"
 	st := m.status
 	if m.loading {
 		st = "⟳ " + st
