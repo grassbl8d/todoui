@@ -132,8 +132,9 @@ const (
 	modeConfirm
 	modeProjectPick
 	modeHelp
-	modeDetail     // viewing a single task
-	modeDetailEdit // editing one field of the task in detail view
+	modeDetail       // viewing a single task
+	modeDetailEdit   // editing one field of the task in detail view
+	modePriorityPick // choosing a priority to filter by
 )
 
 // editField is which task field the detail editor is changing.
@@ -148,9 +149,10 @@ const (
 // viewState captures everything that defines what the task list shows, so we
 // can push/pop it for browser-style back navigation.
 type viewState struct {
-	filter      string
-	textQuery   string
-	projectView string
+	filter       string
+	textQuery    string
+	projectView  string
+	priorityView string // "" = any, else "p1".."p4"
 }
 
 // sortMode is how the task list is ordered.
@@ -201,6 +203,8 @@ type model struct {
 	filter       string     // active server-side Todoist filter (working value)
 	textQuery    string     // local case-insensitive text search (working value)
 	projectView  string     // local project filter, display name e.g. "#Bills" (working value)
+	priorityView string     // local priority filter "p1".."p4" (working value)
+	prioCursor   int        // cursor in the priority picker
 	loadedFilter string     // the server filter that allTasks currently reflects
 	current      viewState  // the committed view currently shown
 	history      []viewState // back-stack of previously committed views
@@ -392,6 +396,9 @@ func (m *model) applyView() {
 		if m.projectView != "" && t.Project != m.projectView {
 			continue
 		}
+		if m.priorityView != "" && t.Priority != m.priorityView {
+			continue
+		}
 		if q != "" {
 			hay := strings.ToLower(t.Content + " " + t.Project + " " + t.Labels)
 			if !strings.Contains(hay, q) {
@@ -464,24 +471,29 @@ func (m *model) sortTasks(ts []Task) {
 // scopeStatus describes the current view and its visible count.
 func (m *model) scopeStatus() string {
 	n := len(m.list.Items())
-	switch {
-	case m.filter != "":
+	if m.filter != "" {
 		return fmt.Sprintf("filter: %s — %d", m.filter, n)
-	case m.projectView != "" && m.textQuery != "":
-		return fmt.Sprintf("%s · “%s” — %d", m.projectView, m.textQuery, n)
-	case m.projectView != "":
-		return fmt.Sprintf("%s — %d", m.projectView, n)
-	case m.textQuery != "":
-		return fmt.Sprintf("“%s” — %d", m.textQuery, n)
-	default:
+	}
+	var parts []string
+	if m.projectView != "" {
+		parts = append(parts, m.projectView)
+	}
+	if m.priorityView != "" {
+		parts = append(parts, m.priorityView)
+	}
+	if m.textQuery != "" {
+		parts = append(parts, "“"+m.textQuery+"”")
+	}
+	if len(parts) == 0 {
 		return fmt.Sprintf("%d tasks", n)
 	}
+	return fmt.Sprintf("%s — %d", strings.Join(parts, " · "), n)
 }
 
 // applyState sets the working view variables and refreshes the list, reloading
 // from the server only when the needed server filter differs from what's loaded.
 func (m *model) applyState(s viewState) tea.Cmd {
-	m.filter, m.textQuery, m.projectView = s.filter, s.textQuery, s.projectView
+	m.filter, m.textQuery, m.projectView, m.priorityView = s.filter, s.textQuery, s.projectView, s.priorityView
 	if s.filter != m.loadedFilter {
 		m.loading = true
 		return loadTasks(s.filter)
@@ -605,6 +617,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateDetail(msg)
 		case modeDetailEdit:
 			return m.updateDetailEdit(msg)
+		case modePriorityPick:
+			return m.updatePriorityPick(msg)
 		}
 	}
 
@@ -677,6 +691,17 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		// Ongoing — show all tasks tagged @ongoing.
 		return m, m.commit(viewState{filter: "@ongoing"})
+	case "P":
+		// Filter by priority — open the priority picker.
+		m.mode = modePriorityPick
+		m.err = ""
+		m.prioCursor = 0
+		for i, o := range priorityOptions {
+			if o.val == m.priorityView {
+				m.prioCursor = i
+			}
+		}
+		return m, nil
 	case "d":
 		if _, ok := m.selectedTask(); ok {
 			m.mode = modeConfirm
@@ -777,6 +802,56 @@ func (m *model) selectLastProject() {
 			return
 		}
 	}
+}
+
+// priorityOptions lists the choices in the priority picker (P).
+var priorityOptions = []struct {
+	val   string // "" = any, else p1..p4
+	label string
+}{
+	{"", "↩ All priorities"},
+	{"p1", "p1 — Urgent"},
+	{"p2", "p2 — High"},
+	{"p3", "p3 — Medium"},
+	{"p4", "p4 — Normal / none"},
+}
+
+// pickPriority commits a priority filter, keeping the current project & search.
+func (m model) pickPriority(val string) (tea.Model, tea.Cmd) {
+	m.mode = modeList
+	cmd := m.commit(viewState{
+		projectView:  m.current.projectView,
+		textQuery:    m.current.textQuery,
+		priorityView: val,
+	})
+	return m, cmd
+}
+
+func (m model) updatePriorityPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc", "b", "q":
+		m.mode = modeList
+		return m, nil
+	case "up", "k":
+		if m.prioCursor > 0 {
+			m.prioCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.prioCursor < len(priorityOptions)-1 {
+			m.prioCursor++
+		}
+		return m, nil
+	case "enter":
+		return m.pickPriority(priorityOptions[m.prioCursor].val)
+	case "0", "a":
+		return m.pickPriority("")
+	case "1", "2", "3", "4":
+		return m.pickPriority("p" + msg.String())
+	}
+	return m, nil
 }
 
 func (m model) updateProjectPick(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -973,6 +1048,9 @@ func (m model) View() string {
 		if m.projectView != "" {
 			parts = append(parts, "project: "+m.projectView)
 		}
+		if m.priorityView != "" {
+			parts = append(parts, "priority: "+m.priorityView)
+		}
 		if m.textQuery != "" {
 			parts = append(parts, "search: "+m.textQuery)
 		}
@@ -995,6 +1073,27 @@ func (m model) View() string {
 
 	if m.mode == modeDetail || m.mode == modeDetailEdit {
 		return lipgloss.JoinVertical(lipgloss.Left, header, m.detailView())
+	}
+
+	if m.mode == modePriorityPick {
+		hint := lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("Filter by priority")
+		var rows []string
+		rows = append(rows, "", "  "+hint, "")
+		for i, o := range priorityOptions {
+			pc := prioColors[o.val]
+			if pc == "" {
+				pc = lipgloss.Color("#DDDDDD")
+			}
+			cur := "   "
+			st := lipgloss.NewStyle().Foreground(pc)
+			if i == m.prioCursor {
+				cur = lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(" ▸ ")
+				st = st.Bold(true)
+			}
+			rows = append(rows, cur+st.Render(o.label))
+		}
+		rows = append(rows, "", helpStyle.Render("  ↑/↓ move · 1-4 priority · 0 all · enter select · esc cancel"))
+		return lipgloss.JoinVertical(lipgloss.Left, header, lipgloss.JoinVertical(lipgloss.Left, rows...))
 	}
 
 	var body string
@@ -1124,6 +1223,7 @@ func (m model) helpView() string {
 		"",
 		head.Render("  Views"),
 		row("p", "View by project (pick from the list; “↩ All Projects” to reset)"),
+		row("P", "Filter by priority (pick p1–p4 from the menu)"),
 		row("o", "Ongoing — show all tasks tagged @ongoing"),
 		row("/", "Search — plain words search locally; filters run server-side"),
 		"",
@@ -1153,7 +1253,7 @@ func (m model) footer() string {
 	if m.err != "" {
 		return errStyle.Render("⚠ " + m.err)
 	}
-	keys := "a add · p project · o ongoing · / search · 1-5 sort · enter view · c done · d del · s sync · H help · q quit"
+	keys := "a add · p project · P priority · o ongoing · / search · 1-5 sort · enter view · c done · d del · s sync · H help · q quit"
 	st := m.status
 	if m.loading {
 		st = "⟳ " + st

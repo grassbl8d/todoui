@@ -135,6 +135,7 @@ entirely from the keyboard.
 | `c`             | Complete the selected task                                   |
 | `d`             | Delete the selected task (asks `y`/`n`)                      |
 | `p`             | **View by project** — pick a project to filter the list      |
+| `P`             | **Filter by priority** — pick p1–p4 from a menu              |
 | `o`             | **Ongoing** — show all tasks tagged `@ongoing`               |
 | `/`             | Search — plain words (local text search) or a Todoist filter |
 | `1`–`5`         | **Sort** by priority / due / project / name / labels (`0` = default; repeat to reverse) |

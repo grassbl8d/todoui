@@ -421,6 +421,47 @@ func TestOngoingFilter(t *testing.T) {
 	}
 }
 
+func TestPriorityFilter(t *testing.T) {
+	m := initialModel()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	nm, _ := m.Update(tasksLoadedMsg{tasks: []Task{
+		{ID: "1", Priority: "p1", Content: "urgent"},
+		{ID: "2", Priority: "p4", Content: "normal"},
+		{ID: "3", Priority: "p1", Content: "urgent 2"},
+	}})
+	m = nm.(model)
+	// open priority picker
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	m = nm.(model)
+	if m.mode != modePriorityPick {
+		t.Fatal("P should open the priority picker")
+	}
+	// pick p1 directly
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	m = nm.(model)
+	if m.priorityView != "p1" {
+		t.Fatalf("priorityView = %q, want p1", m.priorityView)
+	}
+	if cmd != nil {
+		t.Fatal("priority filter is local; no reload expected")
+	}
+	if len(m.list.Items()) != 2 {
+		t.Fatalf("want 2 p1 tasks, got %d", len(m.list.Items()))
+	}
+	// reopen and choose All priorities (0) to clear
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	m = nm.(model)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("0")})
+	m = nm.(model)
+	if m.priorityView != "" {
+		t.Fatal("All priorities should clear the priority filter")
+	}
+	if len(m.list.Items()) != 3 {
+		t.Fatalf("want all 3 tasks, got %d", len(m.list.Items()))
+	}
+}
+
 func TestSortByPriority(t *testing.T) {
 	m := initialModel()
 	m.width, m.height = 100, 40
