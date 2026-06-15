@@ -581,6 +581,30 @@ func TestPinFocusAndUnpin(t *testing.T) {
 	}
 }
 
+func TestPinFromDetail(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	nm, _ := m.Update(tasksLoadedMsg{tasks: []Task{
+		{ID: "1", Content: "a"}, {ID: "2", Content: "b"},
+	}})
+	m = nm.(model)
+	// open detail on the first task, then pin it
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if m.mode != modeDetail {
+		t.Fatal("enter should open detail")
+	}
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("P")})
+	m = nm.(model)
+	if m.pinnedID != "1" {
+		t.Fatalf("P in detail should pin the task, got %q", m.pinnedID)
+	}
+	if m.mode != modeList {
+		t.Fatal("pinning from detail should return to the focus view")
+	}
+}
+
 func TestPinnedAddCommentShowsComments(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 100, 40

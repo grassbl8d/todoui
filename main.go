@@ -1533,6 +1533,15 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Home — close detail and go to the home view.
 		m.mode = modeList
 		return m, m.commit(viewState{})
+	case "P":
+		// Pin the task being viewed → focus mode.
+		if m.detailID != "" {
+			m.pinnedID = m.detailID
+			m.mode = modeList
+			m.applyView()
+			m.status = "📌 pinned: " + m.detailTask.Content
+		}
+		return m, nil
 	case ":":
 		m.mode = modeCommand
 		m.input.EchoMode = textinput.EchoNormal
@@ -2328,6 +2337,7 @@ func (m model) detailView() string {
 			key.Render("l") + label.Render(" labels  ") +
 			key.Render("e") + label.Render(" name  ") +
 			key.Render("m") + label.Render(" comment  ") +
+			key.Render("P") + label.Render(" pin  ") +
 			key.Render("c") + label.Render(" done  ") +
 			key.Render("b") + label.Render(" back")
 		lines = append(lines, actions)
