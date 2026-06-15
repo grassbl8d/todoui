@@ -326,6 +326,7 @@ type model struct {
 	tickGen      int        // generation guard for the auto-sync ticker
 	optCursor    int        // selected row on the options page
 	pinnedID     string     // when set, only this task is shown (focus mode)
+	showComments bool       // on the pinned focus screen, show the comments list
 	helpOffset   int        // scroll offset of the help page
 	addProject   Project    // project chosen for the task currently being added
 	recents      []Project  // recently-chosen projects, most recent first (persisted)
@@ -1033,6 +1034,23 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// While pinned (focus mode), block view-switching to keep you on one task.
 	if m.pinnedID != "" {
 		switch msg.String() {
+		case "m":
+			// Add a comment to the pinned task.
+			m.detailID = m.pinnedID
+			m.mode = modeCommentAdd
+			m.input.EchoMode = textinput.EchoNormal
+			m.input.Placeholder = "write a comment…"
+			m.input.SetValue("")
+			m.input.CursorEnd()
+			m.input.Focus()
+			return m, textinput.Blink
+		case "v":
+			// Toggle the comments list on the focus card.
+			m.showComments = !m.showComments
+			if m.showComments && m.cache != nil {
+				m.comments = m.cache.CommentsFor(m.pinnedID)
+			}
+			return m, nil
 		case "a", "A", "p", "!", "o", "f", "t", "T", "d", "D", "R",
 			"/", "?", "O", "b", "h", "1", "2", "3", "4", "5", "6", "0":
 			m.status = "📌 pinned — type :unpin (then Enter) to switch tasks"
@@ -1550,19 +1568,25 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateCommentAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Return to the pinned focus card if commenting from there, else the detail view.
+	back := modeDetail
+	if m.pinnedID != "" && m.detailID == m.pinnedID {
+		back = modeList
+	}
 	switch msg.String() {
 	case "esc":
-		m.mode = modeDetail
+		m.mode = back
 		m.input.Blur()
 		return m, nil
 	case "enter":
 		val := strings.TrimSpace(m.input.Value())
-		m.mode = modeDetail
+		m.mode = back
 		m.input.Blur()
 		if val == "" {
 			return m, nil
 		}
 		m.addCommentLocal(m.detailID, val)
+		m.showComments = true // jump to showing comments after adding one
 		return m, nil
 	}
 	var cmd tea.Cmd
@@ -1981,7 +2005,7 @@ func (m model) View() string {
 	}
 
 	// Pinned focus mode: a centered card instead of the list.
-	if m.pinnedID != "" && (m.mode == modeList || m.mode == modeCommand) {
+	if m.pinnedID != "" && (m.mode == modeList || m.mode == modeCommand || m.mode == modeCommentAdd) {
 		return m.pinnedFocusView(header)
 	}
 
@@ -2101,12 +2125,42 @@ func (m model) pinnedFocusView(header string) string {
 	}
 
 	rows = append(rows, "", strings.Repeat("─", cardW-8))
-	if m.mode == modeCommand {
+
+	// Comments section (when shown).
+	if m.showComments {
+		cs := m.comments
+		if m.cache != nil {
+			cs = m.cache.CommentsFor(m.pinnedID)
+		}
+		head := lipgloss.NewStyle().Foreground(projectColor).Bold(true).Render(fmt.Sprintf("Comments (%d)", len(cs)))
+		rows = append(rows, "", head)
+		if len(cs) == 0 {
+			rows = append(rows, dim.Render("(none yet — press m to add one)"))
+		} else {
+			for _, c := range cs {
+				when := lipgloss.NewStyle().Foreground(subColor).Render(shortTime(c.PostedAt))
+				body := lipgloss.NewStyle().Foreground(textColor).Width(cardW - 8).Align(lipgloss.Center).
+					Render(strings.ReplaceAll(strings.TrimSpace(c.Content), "\n", " "))
+				rows = append(rows, when, body)
+			}
+		}
+		rows = append(rows, "")
+	}
+
+	switch m.mode {
+	case modeCommand:
 		rows = append(rows, "", lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render(": ")+m.input.View())
 		rows = append(rows, dim.Render("type unpin, then Enter"))
-	} else {
+	case modeCommentAdd:
+		rows = append(rows, "", lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("New comment  ")+m.input.View())
+		rows = append(rows, dim.Render("enter to post · esc cancel"))
+	default:
+		cToggle := "v show comments"
+		if m.showComments {
+			cToggle = "v hide comments"
+		}
 		rows = append(rows, "", dim.Render("type ")+accent.Render(":unpin")+dim.Render(" then Enter to release"))
-		rows = append(rows, dim.Render("enter to open · c complete · s sync · q quit"))
+		rows = append(rows, accent.Render("m")+dim.Render(" add comment   ")+accent.Render(cToggle)+dim.Render("   enter open · c done · s sync"))
 	}
 
 	inner := lipgloss.JoinVertical(lipgloss.Center, rows...)
@@ -2327,6 +2381,7 @@ func helpLines() []string {
 		head.Render("  Views & filters"),
 		row("p", "View by project (pick from the list; “↩ All Projects” to reset)"),
 		row("P", "Pin — focus on one task; only it shows (this session)"),
+		row("", "   while pinned: m add comment · v show/hide comments"),
 		row(":unpin", "Release the pin (type : then unpin, Enter)"),
 		row("*", "Toggle light / dark theme"),
 		row("!", "Filter by priority (pick p1–p4 from the menu)"),
@@ -2411,6 +2466,12 @@ func (m model) updateHelp(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
+	case "*":
+		// Toggle theme without leaving help.
+		m.settings.Light = !m.settings.Light
+		m.settings.Save()
+		m.applyThemeFromSettings()
+		return m, nil
 	case "j", "down":
 		if m.helpOffset < m.maxHelpOffset() {
 			m.helpOffset++

@@ -581,6 +581,41 @@ func TestPinFocusAndUnpin(t *testing.T) {
 	}
 }
 
+func TestPinnedAddCommentShowsComments(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	m.cache.Items["1"] = apiItem{ID: "1", Content: "focus", Priority: 1}
+	m.pinnedID = "1"
+	m.deriveAll()
+	// press m to add a comment
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("m")})
+	m = nm.(model)
+	if m.mode != modeCommentAdd {
+		t.Fatal("m should open the comment input while pinned")
+	}
+	for _, r := range "looks good" {
+		nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		m = nm.(model)
+	}
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if !m.showComments {
+		t.Fatal("adding a comment should auto-show comments")
+	}
+	if got := len(m.cache.CommentsFor("1")); got != 1 {
+		t.Fatalf("comment should be queued/cached, got %d", got)
+	}
+	if !strings.Contains(m.View(), "Comments (1)") {
+		t.Fatal("pinned card should list the new comment")
+	}
+	// v toggles comments off
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("v")})
+	if nm.(model).showComments {
+		t.Fatal("v should toggle comments off")
+	}
+}
+
 func TestCompletingPinnedAutoUnpins(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 100, 40
