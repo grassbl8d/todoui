@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strings"
 
@@ -11,6 +12,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
+
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
 
 // ---------- styling ----------
 
@@ -1268,6 +1272,19 @@ func (m model) footer() string {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--version", "-v", "version":
+			fmt.Println("todoui", version)
+			return
+		case "--help", "-h", "help":
+			fmt.Println("todoui — a terminal UI for Todoist (wraps the `todoist` CLI)")
+			fmt.Println("Usage: todoui            start the UI")
+			fmt.Println("       todoui --version  print version")
+			fmt.Println("Press H inside the app for the keyboard reference.")
+			return
+		}
+	}
 	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Println("error:", err)
