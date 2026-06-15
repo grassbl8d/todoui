@@ -1,0 +1,22 @@
+# Compiled binaries
+/todoui
+/todoui.exe
+/dist/
+*.exe
+*.test
+*.out
+
+# Go
+*.o
+*.a
+vendor/
+
+# Editor / OS cruft
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Local state (todoui writes to ~/.config/todoui, but ignore any stray local copies)
+last_project.txt
