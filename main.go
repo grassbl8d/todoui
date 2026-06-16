@@ -17,7 +17,7 @@ import (
 
 // version is the default shown in-app; release builds override it with
 // -ldflags "-X main.version=vX.Y.Z". Bump this when cutting a new version.
-var version = "v0.1.5"
+var version = "v0.1.6"
 
 // ---------- theming (light / dark) ----------
 
@@ -3031,7 +3031,7 @@ func (m model) helpView() string {
 			pos = fmt.Sprintf("%d%%", off*100/m.maxHelpOffset())
 		}
 	}
-	hint := helpStyle.Render(fmt.Sprintf("  j/k ↑/↓ scroll · %s · + theme · any other key closes", pos))
+	hint := helpStyle.Render(fmt.Sprintf("  j/k ↑/↓ scroll · %s · + change theme · any other key closes", pos))
 
 	return lipgloss.JoinVertical(lipgloss.Left, append(window, hint)...)
 }
@@ -3092,13 +3092,9 @@ func (m model) footer() string {
 	if m.online {
 		badges = append(badges, lipgloss.NewStyle().Foreground(labelColor).Render("online"))
 	}
-	// Always-visible theme indicator + how to toggle it.
-	themeName := "dark"
-	if m.settings.Light {
-		themeName = "light"
-	}
+	// Always-visible hint for the theme toggle.
 	badges = append(badges, lipgloss.NewStyle().Foreground(brandRed).Bold(true).Render("+")+
-		lipgloss.NewStyle().Foreground(subColor).Render(" "+themeName))
+		lipgloss.NewStyle().Foreground(subColor).Render(" change theme"))
 	statusLine := statusStyle.Render(st)
 	if len(badges) > 0 {
 		statusLine = statusStyle.Render(st+"  ") + strings.Join(badges, statusStyle.Render(" · "))
