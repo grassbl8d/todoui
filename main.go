@@ -2079,7 +2079,7 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
-	case "esc", "q", "O":
+	case "esc", "q", "b", "O":
 		m.mode = modeList
 		return m, nil
 	case "up", "k":
@@ -2662,7 +2662,7 @@ func (m model) optionsView(header string) string {
 	} else {
 		lines = append(lines, dim.Render("  The ongoing label is what the o key filters on."))
 		lines = append(lines, dim.Render("  Auto-sync pushes queued changes & pulls on a timer."))
-		lines = append(lines, "", helpStyle.Render("  ↑/↓ move · enter edit · esc/, close"))
+		lines = append(lines, "", helpStyle.Render("  ↑/↓ move · enter edit · b/esc/, close"))
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, lines...)...)
 }
