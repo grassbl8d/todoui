@@ -55,6 +55,18 @@ notarized binaries. Upload those to the GitHub release in place of the plain `.t
 macOS archives (the Linux/Windows archives are unaffected — Windows uses a different
 signing scheme, and Linux needs none).
 
+## Cutting a release
+
+This file covers the one-time cert/notary setup. For the actual release workflow
+— `scripts/release.sh`, auto-versioning, `--tag-only`, and the flags — see
+**[`RELEASING.md`](RELEASING.md)**. The short version:
+
+```bash
+scripts/release.sh        # auto-version, build, sign, notarize, prompt, publish
+```
+
+(with `SIGN_IDENTITY` exported in your shell, as `RELEASING.md` describes).
+
 ## Notes & caveats
 
 - **Bare CLI binaries can't be *stapled*** (`stapler` only supports `.app`, `.dmg`,
