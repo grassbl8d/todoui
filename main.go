@@ -231,6 +231,7 @@ const (
 	modeIdeaAdd       // 💡 capture a new idea (overlay)
 	modeIdeaList      // 💡 browse captured ideas
 	modeDeadlinePick  // pick a deadline from quick options
+	modeTimezone      // searchable IANA timezone picker
 )
 
 // deadlineOptions are the quick picks shown when setting a deadline.
@@ -342,6 +343,9 @@ type model struct {
 	settings     Settings   // user preferences (ongoing label, sync interval)
 	tickGen      int        // generation guard for the auto-sync ticker
 	optCursor    int        // selected row on the options page
+	tzAll        []string   // all selectable IANA zone names (loaded on first open)
+	tzQuery      string     // type-to-filter text in the timezone picker
+	tzCursor     int        // selected row in the timezone picker
 	pinnedID     string     // when set, only this task is shown (focus mode)
 	showComments bool       // on the pinned focus screen, show the comments list
 	projDelTarget Project   // project pending delete-confirmation
@@ -419,6 +423,7 @@ func initialModel() model {
 	}
 	m.applyThemeFromSettings()
 	dateFmt = m.settings.DateFormat
+	applyTimezone(m.settings.Timezone)
 	m.deriveAll()
 	if !HasToken() {
 		m.beginOnboard("Welcome! Paste your Todoist API token to get started.")
@@ -1090,6 +1095,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateIdeaList(msg)
 		case modeDeadlinePick:
 			return m.updateDeadlinePick(msg)
+		case modeTimezone:
+			return m.updateTimezone(msg)
 		}
 	}
 
@@ -2063,6 +2070,7 @@ func (m model) optionRows() []struct{ label, value string } {
 		{"Up Next label", "@" + m.settings.UpNextLabel},
 		{"Background auto-sync", sync},
 		{"Date format", dateInputHint() + "  (enter to cycle)"},
+		{"Timezone", m.settings.Timezone + "  " + tzOffsetLabel(m.settings.Timezone) + "  (enter to choose)"},
 	}
 }
 
@@ -2095,6 +2103,16 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			dateFmt = m.settings.DateFormat
 			m.settings.Save()
 			m.status = "date format: " + dateInputHint()
+			return m, nil
+		}
+		if m.optCursor == 5 {
+			// Timezone opens the searchable picker (not an inline text edit).
+			if len(m.tzAll) == 0 {
+				m.tzAll = availableTimezones()
+			}
+			m.tzQuery = ""
+			m.tzCursor = tzIndexOf(m.tzAll, m.settings.Timezone)
+			m.mode = modeTimezone
 			return m, nil
 		}
 		m.mode = modeOptionsEdit
@@ -2279,6 +2297,10 @@ func (m model) View() string {
 
 	if m.mode == modeOptions || m.mode == modeOptionsEdit {
 		return m.optionsView(header)
+	}
+
+	if m.mode == modeTimezone {
+		return m.timezoneView(header)
 	}
 
 	if m.mode == modeHelp {
@@ -2645,6 +2667,109 @@ func (m model) optionsView(header string) string {
 	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, lines...)...)
 }
 
+// tzFiltered returns the zones matching the current type-to-filter query.
+func (m model) tzFiltered() []string {
+	q := strings.ToLower(strings.TrimSpace(m.tzQuery))
+	if q == "" {
+		return m.tzAll
+	}
+	var out []string
+	for _, z := range m.tzAll {
+		if strings.Contains(strings.ToLower(z), q) {
+			out = append(out, z)
+		}
+	}
+	return out
+}
+
+// updateTimezone drives the searchable IANA timezone picker.
+func (m model) updateTimezone(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	matches := m.tzFiltered()
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "esc":
+		m.mode = modeOptions
+		return m, nil
+	case "enter":
+		if len(matches) > 0 {
+			if m.tzCursor >= len(matches) {
+				m.tzCursor = len(matches) - 1
+			}
+			name := matches[m.tzCursor]
+			m.settings.Timezone = name
+			applyTimezone(name)
+			m.settings.Save()
+			m.deriveAll() // "today" may have shifted — refresh derived views
+			m.status = "timezone: " + name + "  " + tzOffsetLabel(name)
+		}
+		m.mode = modeOptions
+		return m, nil
+	case "up":
+		if m.tzCursor > 0 {
+			m.tzCursor--
+		}
+		return m, nil
+	case "down":
+		if m.tzCursor < len(matches)-1 {
+			m.tzCursor++
+		}
+		return m, nil
+	case "backspace":
+		if len(m.tzQuery) > 0 {
+			m.tzQuery = m.tzQuery[:len(m.tzQuery)-1]
+			m.tzCursor = 0
+		}
+		return m, nil
+	default:
+		// Any printable key extends the search (j/k are filter text, not nav).
+		if len(msg.Runes) > 0 {
+			m.tzQuery += string(msg.Runes)
+			m.tzCursor = 0
+		}
+		return m, nil
+	}
+}
+
+// timezoneView renders the searchable timezone picker.
+func (m model) timezoneView(header string) string {
+	accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	dim := lipgloss.NewStyle().Foreground(subColor)
+	val := lipgloss.NewStyle().Foreground(projectColor)
+	matches := m.tzFiltered()
+
+	lines := []string{"", "  " + accent.Render("Timezone") + dim.Render("   search: ") + m.tzQuery + "▏", ""}
+
+	const win = 12
+	start := 0
+	if m.tzCursor >= win {
+		start = m.tzCursor - win + 1
+	}
+	end := start + win
+	if end > len(matches) {
+		end = len(matches)
+	}
+	if len(matches) == 0 {
+		lines = append(lines, "  "+dim.Render("no match — try a city or region (e.g. Manila, Tokyo, London)"))
+	}
+	for i := start; i < end; i++ {
+		z := matches[i]
+		cur := "   "
+		name := dim.Render(fmt.Sprintf("%-32s", z))
+		if i == m.tzCursor {
+			cur = accent.Render(" ▸ ")
+			name = lipgloss.NewStyle().Foreground(brightColor).Bold(true).Render(fmt.Sprintf("%-32s", z))
+		}
+		lines = append(lines, cur+name+val.Render(tzOffsetLabel(z)))
+	}
+	lines = append(lines, "")
+	if len(matches) > 0 {
+		lines = append(lines, dim.Render(fmt.Sprintf("  %d zones · showing %d–%d", len(matches), start+1, end)))
+	}
+	lines = append(lines, "", helpStyle.Render("  type to filter · ↑/↓ move · enter select · esc cancel"))
+	return lipgloss.JoinVertical(lipgloss.Left, append([]string{header}, lines...)...)
+}
+
 // onboardView renders the first-run / invalid-token token entry screen.
 func (m model) onboardView(header string) string {
 	dim := lipgloss.NewStyle().Foreground(subColor)
@@ -2805,7 +2930,7 @@ func helpLines() []string {
 		head.Render("  Offline & settings"),
 		row("", "Changes apply instantly to a local cache and queue up."),
 		row("", "Press s to push them; everything works offline until then."),
-		row(",", "Menu — ongoing/follow-up/up-next labels & background-sync interval"),
+		row(",", "Menu — labels, background-sync interval, date format & timezone"),
 		row("X", "Clear data — remove token, cache & queue (asks first)"),
 		"",
 		head.Render("  In the task view"),

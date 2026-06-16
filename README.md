@@ -159,7 +159,7 @@ entirely from the keyboard.
 | `h` / `Esc`     | **Home** — clear all filters & views, back to all tasks      |
 | `r`             | Refresh the view from the local cache                       |
 | `s`             | **Sync** — push queued changes & pull updates               |
-| `,`             | **Menu** — ongoing/follow-up/up-next labels, auto-sync interval & date format |
+| `,`             | **Menu** — labels, auto-sync interval, date format & timezone |
 | `X`             | **Clear data** — remove token, cache & queue (asks first)    |
 | `H`             | **Help** — open the (scrollable) keyboard reference          |
 | `q` / `Ctrl+C`  | Quit                                                         |
@@ -208,6 +208,18 @@ Press `Esc` (or `h`) to clear and return to all tasks.
 
 `o` (ongoing), `f` (follow-up) and `u` (up next) show tasks carrying a label you choose
 in **Options** (`,`). Defaults: `@ongoing`, `@ffup` and `@upnext`.
+
+### Timezone
+
+`today`, `overdue`, and the week/month views are computed in the timezone set in
+**Menu** (`,`). The default is **Asia/Manila** (UTC+8). Choosing the **Timezone** row
+opens a type-to-filter picker over the IANA zone database — start typing a city or
+region (e.g. `manila`, `tokyo`, `london`), use `↑/↓` to move, `enter` to select.
+
+### Background sync
+
+Background auto-sync defaults to every **30 seconds** (push queued changes, pull
+updates). Change the interval — or turn it off with `0` — from the **Menu** (`,`).
 
 ### Pin / focus mode (for single-tasking)
 

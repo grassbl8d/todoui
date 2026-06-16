@@ -11,7 +11,7 @@ import (
 // @label, #project, p1-p4, free text, combined with | , (or) & (and) ! (not)
 // and parentheses.
 
-func todayStr() string { return time.Now().Format("2006-01-02") }
+func todayStr() string { return time.Now().In(tz).Format("2006-01-02") }
 
 // dateFmt is the active date display/input format: MDY (default), YMD, or DMY.
 var dateFmt = "MDY"

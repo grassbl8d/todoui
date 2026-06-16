@@ -14,10 +14,11 @@ type Settings struct {
 	SyncSeconds   int    `json:"sync_seconds"`   // background auto-sync interval; 0 = off
 	Light         bool   `json:"light"`          // light theme (false = dark, the default)
 	DateFormat    string `json:"date_format"`    // MDY (default), YMD, or DMY
+	Timezone      string `json:"timezone"`       // IANA zone for "today" math (default Asia/Manila)
 }
 
 func defaultSettings() Settings {
-	return Settings{OngoingLabel: "ongoing", FollowupLabel: "ffup", UpNextLabel: "upnext", SyncSeconds: 300, DateFormat: "MDY"}
+	return Settings{OngoingLabel: "ongoing", FollowupLabel: "ffup", UpNextLabel: "upnext", SyncSeconds: 30, DateFormat: "MDY", Timezone: "Asia/Manila"}
 }
 
 func settingsPath() string {
@@ -62,6 +63,9 @@ func LoadSettings() Settings {
 	}
 	if s.DateFormat != "YMD" && s.DateFormat != "DMY" {
 		s.DateFormat = "MDY"
+	}
+	if s.Timezone == "" {
+		s.Timezone = "Asia/Manila"
 	}
 	return s
 }
