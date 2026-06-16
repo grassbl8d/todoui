@@ -69,6 +69,7 @@ scripts/release.sh
   ├─ preflight: clean tree · gh auth · fetch tags
   ├─ resolve version (auto or explicit); bump+commit main.go if needed
   ├─ go test ./...
+  ├─ Todoist integration guard (live API; runs if a token is present)
   ├─ build into dist/:
   │     macOS arm64 + amd64  → sign → notarize (uploads to Apple)
   │     linux amd64 + arm64  → .tar.gz
@@ -92,9 +93,26 @@ scripts/release.sh
 | `scripts/release.sh --no-publish` | Build everything into `dist/`, print the manual publish commands, push nothing. |
 | `scripts/release.sh --yes` | Skip the confirmation prompt (unattended). |
 | `scripts/release.sh --skip-mac` | Skip macOS sign/notarize; build Linux/Windows only (e.g. before the cert exists). |
-| `scripts/release.sh --skip-tests` | Skip the `go test ./...` gate. |
+| `scripts/release.sh --skip-tests` | Skip the `go test ./...` gate (also skips the integration guard). |
 
 Flags combine, e.g. `scripts/release.sh v0.1.7 --skip-mac --no-publish`.
+
+### Todoist integration guard
+
+`go test ./...` excludes the live-API tests (they're behind the `integration`
+build tag). The release runs them separately **when a Todoist token is
+available** — they hit the real server to confirm the endpoints todo-ui relies
+on (token validation, full sync, filter, **completed-tasks fetch**, and the
+item add/complete/uncomplete/delete commands) still work, since that's the part
+most likely to break.
+
+```bash
+scripts/integration-test.sh                      # read-only checks
+TODOUI_INTEGRATION_WRITE=1 scripts/integration-test.sh   # + create→complete→reopen→delete round-trip
+```
+
+Set `SKIP_INTEGRATION=1` to skip it during a release even when a token is
+present. Without any token the guard is skipped (never a release blocker).
 
 ### `--tag-only`
 

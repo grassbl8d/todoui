@@ -182,6 +182,19 @@ fi
 if [ "$SKIP_TESTS" -eq 0 ]; then
   echo "==> go test ./..."
   go test ./...
+
+  # Live Todoist API guard — the integration most likely to break. Runs only
+  # when a token is available; otherwise it's skipped (not a release blocker).
+  # Disable explicitly with SKIP_INTEGRATION=1.
+  if [ "${SKIP_INTEGRATION:-0}" != "1" ] && \
+     { [ -n "${TODOIST_API_TOKEN:-}" ] || [ -f "$HOME/.config/todoui/config.json" ] \
+       || [ -f "$HOME/.config/todoist/config.json" ]; }; then
+    echo "==> integration guard (live Todoist API)"
+    go test -tags integration -run Integration -count=1 . \
+      || die "Todoist integration guard failed — endpoints may have changed (set SKIP_INTEGRATION=1 to override)"
+  else
+    echo "    (skipping Todoist integration guard — no token or SKIP_INTEGRATION=1)"
+  fi
 else
   echo "    (skipping tests)"
 fi
