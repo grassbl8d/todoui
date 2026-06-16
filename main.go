@@ -1254,6 +1254,9 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "f":
 		// Follow-up — show all tasks tagged with the configured label.
 		return m, m.commit(viewState{filter: "@" + m.settings.FollowupLabel})
+	case "u":
+		// Up Next — show all tasks tagged with the configured label.
+		return m, m.commit(viewState{filter: "@" + m.settings.UpNextLabel})
 	case "t":
 		// Tasks due today only.
 		return m, m.commit(viewState{filter: "today"})
@@ -1295,6 +1298,12 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Tag/untag the selected task with the follow-up label.
 		if t, ok := m.selectedTask(); ok {
 			m.toggleLabel(t.ID, m.settings.FollowupLabel)
+		}
+		return m, nil
+	case "U":
+		// Tag/untag the selected task with the up-next label.
+		if t, ok := m.selectedTask(); ok {
+			m.toggleLabel(t.ID, m.settings.UpNextLabel)
 		}
 		return m, nil
 	case "n":
@@ -2051,6 +2060,7 @@ func (m model) optionRows() []struct{ label, value string } {
 	return []struct{ label, value string }{
 		{"Ongoing label", "@" + m.settings.OngoingLabel},
 		{"Follow-up label", "@" + m.settings.FollowupLabel},
+		{"Up Next label", "@" + m.settings.UpNextLabel},
 		{"Background auto-sync", sync},
 		{"Date format", dateInputHint() + "  (enter to cycle)"},
 	}
@@ -2075,7 +2085,7 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
-		if m.optCursor == 3 {
+		if m.optCursor == 4 {
 			// Date format cycles in place (no text entry).
 			next := map[string]string{"MDY": "YMD", "YMD": "DMY", "DMY": "MDY"}
 			m.settings.DateFormat = next[m.settings.DateFormat]
@@ -2097,6 +2107,9 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.input.Placeholder = "ffup"
 			m.input.SetValue(m.settings.FollowupLabel)
 		case 2:
+			m.input.Placeholder = "upnext"
+			m.input.SetValue(m.settings.UpNextLabel)
+		case 3:
 			m.input.Placeholder = "seconds (0 = off)"
 			m.input.SetValue(strconv.Itoa(m.settings.SyncSeconds))
 		}
@@ -2130,6 +2143,12 @@ func (m model) updateOptionsEdit(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			m.settings.FollowupLabel = label
 		case 2:
+			label := strings.TrimPrefix(val, "@")
+			if label == "" {
+				label = "upnext"
+			}
+			m.settings.UpNextLabel = label
+		case 3:
 			n, err := strconv.Atoi(val)
 			if err != nil || n < 0 {
 				n = 0
@@ -2615,7 +2634,7 @@ func (m model) optionsView(header string) string {
 	lines = append(lines, "")
 
 	if m.mode == modeOptionsEdit {
-		titles := []string{"Ongoing label  @", "Follow-up label  @", "Auto-sync seconds (0 = off)  "}
+		titles := []string{"Ongoing label  @", "Follow-up label  @", "Up Next label  @", "Auto-sync seconds (0 = off)  "}
 		box := promptBox.Render(accent.Render(titles[m.optCursor]) + m.input.View())
 		lines = append(lines, "  "+box, "", helpStyle.Render("  enter save · esc cancel"))
 	} else {
@@ -2786,7 +2805,7 @@ func helpLines() []string {
 		head.Render("  Offline & settings"),
 		row("", "Changes apply instantly to a local cache and queue up."),
 		row("", "Press s to push them; everything works offline until then."),
-		row(",", "Menu — ongoing/follow-up labels & background-sync interval"),
+		row(",", "Menu — ongoing/follow-up/up-next labels & background-sync interval"),
 		row("X", "Clear data — remove token, cache & queue (asks first)"),
 		"",
 		head.Render("  In the task view"),
@@ -2798,6 +2817,7 @@ func helpLines() []string {
 		head.Render("  Tagging"),
 		row("O", "Tag/untag the selected task as ongoing"),
 		row("F", "Tag/untag the selected task as follow-up"),
+		row("U", "Tag/untag the selected task as up next"),
 		"",
 		head.Render("  Ideas & focus"),
 		row("i", "💡 Catch an idea (saved locally; works even while pinned)"),
@@ -2812,6 +2832,7 @@ func helpLines() []string {
 		row("P", "Filter by priority (pick p1–p4 from the menu)"),
 		row("o", "Ongoing — tasks with your ongoing label (set in Menu)"),
 		row("f", "Follow-up — tasks with your follow-up label (set in Menu)"),
+		row("u", "Up Next — tasks with your up-next label (set in Menu)"),
 		row("t", "Due today (only)"),
 		row("T", "Due today or earlier (today + overdue)"),
 		row("W", "Due this week or last week"),

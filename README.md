@@ -140,9 +140,10 @@ entirely from the keyboard.
 | `^`             | **Pin (focus)** — show only the selected task; `:unpin` to release |
 | `i` / `I`       | **💡 Catch an idea / browse ideas** (saved locally)         |
 | `+`             | **Toggle light / dark theme**                                |
-| `O` / `F`       | **Tag / untag** the selected task as ongoing / follow-up    |
+| `O` / `F` / `U` | **Tag / untag** the selected task as ongoing / follow-up / up next |
 | `o`             | **Ongoing view** — tasks with your ongoing label (default `@ongoing`) |
 | `f`             | **Follow-up view** — tasks with your follow-up label (default `@ffup`) |
+| `u`             | **Up Next view** — tasks with your up-next label (default `@upnext`) |
 | `t`             | **Due today** (only)                                        |
 | `T`             | **Due today or earlier** (today + overdue)                  |
 | `W`             | **Due this week or last week**                              |
@@ -158,7 +159,7 @@ entirely from the keyboard.
 | `h` / `Esc`     | **Home** — clear all filters & views, back to all tasks      |
 | `r`             | Refresh the view from the local cache                       |
 | `s`             | **Sync** — push queued changes & pull updates               |
-| `,`             | **Menu** — ongoing/follow-up labels, auto-sync interval & date format |
+| `,`             | **Menu** — ongoing/follow-up/up-next labels, auto-sync interval & date format |
 | `X`             | **Clear data** — remove token, cache & queue (asks first)    |
 | `H`             | **Help** — open the (scrollable) keyboard reference          |
 | `q` / `Ctrl+C`  | Quit                                                         |
@@ -205,8 +206,8 @@ Press `Esc` (or `h`) to clear and return to all tasks.
 
 ### Quick label views
 
-`o` (ongoing) and `f` (follow-up) show tasks carrying a label you choose in **Options**
-(`O`). Defaults: `@ongoing` and `@ffup`.
+`o` (ongoing), `f` (follow-up) and `u` (up next) show tasks carrying a label you choose
+in **Options** (`,`). Defaults: `@ongoing`, `@ffup` and `@upnext`.
 
 ### Pin / focus mode (for single-tasking)
 

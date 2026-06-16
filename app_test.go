@@ -934,6 +934,18 @@ func TestTagOngoingFollowup(t *testing.T) {
 	if got := m.cache.Items["1"].Labels; len(got) != 1 || got[0] != m.settings.FollowupLabel {
 		t.Fatalf("F should add the follow-up label, got %v", got)
 	}
+	// U adds the up-next label
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("U")})
+	m = nm.(model)
+	if got := m.cache.Items["1"].Labels; len(got) != 2 || got[1] != m.settings.UpNextLabel {
+		t.Fatalf("U should add the up-next label, got %v", got)
+	}
+	// U again removes it (toggle)
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("U")})
+	m = nm.(model)
+	if got := m.cache.Items["1"].Labels; len(got) != 1 || got[0] != m.settings.FollowupLabel {
+		t.Fatalf("U again should remove only the up-next label, got %v", got)
+	}
 }
 
 func TestTokenCheckedValidLeavesOnboard(t *testing.T) {

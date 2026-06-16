@@ -10,13 +10,14 @@ import (
 type Settings struct {
 	OngoingLabel  string `json:"ongoing_label"`  // label the `o` view filters on (no @)
 	FollowupLabel string `json:"followup_label"` // label the `f` view filters on (no @)
+	UpNextLabel   string `json:"upnext_label"`   // label the `u` view filters on (no @)
 	SyncSeconds   int    `json:"sync_seconds"`   // background auto-sync interval; 0 = off
 	Light         bool   `json:"light"`          // light theme (false = dark, the default)
 	DateFormat    string `json:"date_format"`    // MDY (default), YMD, or DMY
 }
 
 func defaultSettings() Settings {
-	return Settings{OngoingLabel: "ongoing", FollowupLabel: "ffup", SyncSeconds: 300, DateFormat: "MDY"}
+	return Settings{OngoingLabel: "ongoing", FollowupLabel: "ffup", UpNextLabel: "upnext", SyncSeconds: 300, DateFormat: "MDY"}
 }
 
 func settingsPath() string {
@@ -52,6 +53,9 @@ func LoadSettings() Settings {
 	}
 	if s.FollowupLabel == "" {
 		s.FollowupLabel = "ffup"
+	}
+	if s.UpNextLabel == "" {
+		s.UpNextLabel = "upnext"
 	}
 	if s.SyncSeconds < 0 {
 		s.SyncSeconds = 0
