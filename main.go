@@ -17,7 +17,7 @@ import (
 
 // version is the default shown in-app; release builds override it with
 // -ldflags "-X main.version=vX.Y.Z". Bump this when cutting a new version.
-var version = "v0.1.6"
+var version = "v0.1.7"
 
 // ---------- theming (light / dark) ----------
 
