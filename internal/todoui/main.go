@@ -2302,6 +2302,19 @@ func (m model) updateIdeaList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q", "I", "b":
 		m.mode = modeList
 		return m, nil
+	case "h":
+		// Home — back to the task list with filters cleared.
+		m.mode = modeList
+		return m, m.commit(viewState{})
+	case "i":
+		// 💡 Catch a new idea (same capture flow as the task list).
+		m.mode = modeIdeaAdd
+		m.input.EchoMode = textinput.EchoNormal
+		m.input.Placeholder = "What's the idea?"
+		m.input.SetValue("")
+		m.input.CursorEnd()
+		m.input.Focus()
+		return m, textinput.Blink
 	case "enter", "right", "l":
 		// Open the selected idea as a mind map (the idea is the root node).
 		if m.ideaCursor >= 0 && m.ideaCursor < len(m.ideas) {
@@ -2532,6 +2545,14 @@ func (m model) updateMindMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		// Back to the idea list (b is "back" everywhere).
 		SaveIdeas(m.ideas)
+		m.mode = modeIdeaList
+		return m, nil
+	case "I":
+		// 💡 Jump back to the ideas list (the map's parent). Save first — unlike
+		// the global I hotkey, we must NOT reload from disk and lose edits.
+		// (When editing a node, I is typed text and handled by updateMindEdit.)
+		SaveIdeas(m.ideas)
+		m.mindZoom = false
 		m.mode = modeIdeaList
 		return m, nil
 	case "H", "?":
@@ -3754,7 +3775,11 @@ func (m model) ideaView(header string) string {
 	} else { // modeIdeaList
 		rows = append(rows, yellow.Render(fmt.Sprintf("💡  Ideas (%d)", len(m.ideas))), "")
 		if len(m.ideas) == 0 {
-			rows = append(rows, dim.Render("No ideas yet — press i to catch one."))
+			rows = append(rows,
+				dim.Render("No ideas yet — press i to catch one."),
+				"",
+				dim.Render("i catch · b back · h home"),
+			)
 		} else {
 			for i, idea := range m.ideas {
 				cur := "  "
@@ -3770,7 +3795,7 @@ func (m model) ideaView(header string) string {
 				text := txtStyle.Width(innerW).Render(strings.ReplaceAll(strings.TrimSpace(idea.Text), "\n", " "))
 				rows = append(rows, cur+when, "  "+text, "")
 			}
-			rows = append(rows, dim.Render("j/k move · enter open map · R rename · x delete · b/esc back"))
+			rows = append(rows, dim.Render("j/k move · enter open map · i catch · R rename · x delete · b back · h home"))
 		}
 	}
 

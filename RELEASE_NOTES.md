@@ -7,7 +7,12 @@ suffix for the upcoming version.
 
 ## Unreleased — v0.2.3-dev
 
-_Nothing yet._
+### Fixed
+- **Ideas list**: `i` now captures a new idea (it previously did nothing despite
+  the "press i to catch one" hint), and the keyboard legend (`i catch · b back ·
+  h home`) shows even when the list is empty.
+- **Mind map**: `I` jumps back to the ideas list (its parent); while editing a
+  node, `I` is still typed text.
 
 ## v0.2.2 — 2026-06-26
 

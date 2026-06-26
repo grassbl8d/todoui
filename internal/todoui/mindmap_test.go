@@ -80,6 +80,58 @@ func TestMindMapZoomOverlayShowsFullText(t *testing.T) {
 	}
 }
 
+func TestIdeaListCaptureAndLegend(t *testing.T) {
+	m := mindModel(t)
+	m.ideas = nil // empty ideas list
+	m.mode = modeIdeaList
+
+	// The empty state must still advertise the shortcuts.
+	v := m.View()
+	if !strings.Contains(v, "i catch") || !strings.Contains(v, "b back") || !strings.Contains(v, "h home") {
+		t.Fatalf("empty ideas list should show i/b/h shortcuts, got:\n%s", v)
+	}
+
+	// i captures a new idea (opens the capture input).
+	m = key(m, 'i')
+	if m.mode != modeIdeaAdd {
+		t.Fatalf("i should open idea capture, mode=%d", m.mode)
+	}
+}
+
+func TestIdeaListHomeKey(t *testing.T) {
+	m := mindModel(t)
+	m.mode = modeIdeaList
+	m = key(m, 'h') // home → back to the task list
+	if m.mode != modeList {
+		t.Fatalf("h should return to the task list, mode=%d", m.mode)
+	}
+}
+
+func TestMindMapIGoesToIdeaList(t *testing.T) {
+	m := mindModel(t)
+	m = keyType(m, tea.KeyEnter) // open the map
+	if m.mode != modeMindMap {
+		t.Fatalf("expected map mode, got %d", m.mode)
+	}
+	m = key(m, 'I') // I → ideas list
+	if m.mode != modeIdeaList {
+		t.Fatalf("I in the map should go to the ideas list, mode=%d", m.mode)
+	}
+}
+
+func TestMindEditDoesNotHijackI(t *testing.T) {
+	m := mindModel(t)
+	m = keyType(m, tea.KeyEnter) // map
+	m = keyType(m, tea.KeyTab)   // add a child → editing a node
+	if m.mode != modeMindEdit {
+		t.Fatalf("tab should start editing, mode=%d", m.mode)
+	}
+	m = key(m, 'I') // typed into the node, must NOT jump to ideas
+	if m.mode != modeMindEdit {
+		t.Fatalf("I while editing a node should stay in edit, mode=%d", m.mode)
+	}
+}
+
 func TestMindMapZoomToggleHelpEsc(t *testing.T) {
 	m := mindModel(t)
 	m = keyType(m, tea.KeyEnter) // open the map, cursor on the root idea
