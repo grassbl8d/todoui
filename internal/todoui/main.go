@@ -89,7 +89,8 @@ func init() { applyTheme(darkTheme) } // sensible default before settings load
 type taskItem struct {
 	t     Task
 	sep   bool   // a non-selectable separator row (e.g. "completed")
-	label string // separator label
+	hdr   bool   // a non-selectable group subheader (e.g. a date when sorted)
+	label string // separator / subheader label
 }
 
 func (i taskItem) FilterValue() string {
@@ -108,6 +109,21 @@ func (d taskDelegate) Update(tea.Msg, *list.Model) tea.Cmd { return nil }
 func (d taskDelegate) Render(w io.Writer, m list.Model, index int, item list.Item) {
 	it, ok := item.(taskItem)
 	if !ok {
+		return
+	}
+	if it.hdr {
+		// Non-selectable group subheader (the sort field's value for the group
+		// below it), e.g. a date when sorted by date added. Right-aligned and
+		// placed on the cell's bottom line so it sits just above the first entry.
+		width := m.Width()
+		if width < 10 {
+			width = 10
+		}
+		label := lipgloss.NewStyle().
+			Foreground(subColor).Bold(true).
+			Width(width).Align(lipgloss.Right).
+			Render(it.label + "  ")
+		fmt.Fprintf(w, "\n%s", label)
 		return
 	}
 	if it.sep {
@@ -950,6 +966,101 @@ func (m *model) selectedTask() (Task, bool) {
 	return it.t, true
 }
 
+// sortGroupLabel is the subheader shown above the group a task falls into under
+// the active sort (e.g. its added date when sorted by date added). Empty for the
+// manual/default order, where no subheaders are shown.
+func (m *model) sortGroupLabel(t Task) string {
+	dateOf := func(s string) string {
+		s = strings.TrimSpace(s)
+		if len(s) >= 10 {
+			return fmtDate(s[:10])
+		}
+		return ""
+	}
+	switch m.sortMode {
+	case sortAdded:
+		if m.cache != nil {
+			if d := dateOf(m.cache.Items[t.ID].AddedAt); d != "" {
+				return d
+			}
+		}
+		return "—"
+	case sortPriority:
+		return strings.ToUpper(t.Priority) // P1..P4
+	case sortDue:
+		if d := dateOf(t.DueDate); d != "" {
+			return d
+		}
+		return "No due date"
+	case sortDeadline:
+		if d := dateOf(t.Deadline); d != "" {
+			return d
+		}
+		return "No deadline"
+	case sortProject:
+		if strings.TrimSpace(t.Project) == "" {
+			return "No project"
+		}
+		return t.Project
+	case sortName:
+		if s := strings.TrimSpace(t.Content); s != "" {
+			return strings.ToUpper(string([]rune(s)[0]))
+		}
+		return "—"
+	case sortLabels:
+		if strings.TrimSpace(t.Labels) == "" {
+			return "No labels"
+		}
+		return t.Labels
+	}
+	return ""
+}
+
+// snapOffSeparator moves the list cursor off a non-selectable separator/subheader
+// row to the nearest real task, preferring the travel direction (down for j/↓).
+func (m *model) snapOffSeparator(preferDown bool) {
+	items := m.list.Items()
+	n := len(items)
+	isSep := func(i int) bool {
+		if i < 0 || i >= n {
+			return false
+		}
+		it, ok := items[i].(taskItem)
+		return ok && it.sep
+	}
+	idx := m.list.Index()
+	if !isSep(idx) {
+		return
+	}
+	fwd := func() bool {
+		for i := idx + 1; i < n; i++ {
+			if !isSep(i) {
+				m.list.Select(i)
+				return true
+			}
+		}
+		return false
+	}
+	back := func() bool {
+		for i := idx - 1; i >= 0; i-- {
+			if !isSep(i) {
+				m.list.Select(i)
+				return true
+			}
+		}
+		return false
+	}
+	if preferDown {
+		if !fwd() {
+			back()
+		}
+	} else {
+		if !back() {
+			fwd()
+		}
+	}
+}
+
 // readonlyGuard blocks mutating actions on completed tasks (shown read-only in
 // the completed view). It returns true and sets a status when t is completed.
 func (m *model) readonlyGuard(t Task) bool {
@@ -1029,7 +1140,27 @@ func (m *model) applyView() {
 
 	var items []list.Item
 	if cv != 2 { // 0 or 1: include active tasks
+		// Under an explicit sort, prefix each group with a non-selectable
+		// subheader (the sort field's value) — but only when there are ≥2 groups,
+		// so a list that's all one group (or the manual order) stays uncluttered.
+		showHeaders := false
+		if m.sortMode != sortNone {
+			seen := map[string]bool{}
+			for _, t := range matched {
+				if seen[m.sortGroupLabel(t)] = true; len(seen) > 1 {
+					showHeaders = true
+					break
+				}
+			}
+		}
+		lastHdr := ""
 		for _, t := range matched {
+			if showHeaders {
+				if h := m.sortGroupLabel(t); h != lastHdr {
+					items = append(items, taskItem{sep: true, hdr: true, label: h})
+					lastHdr = h
+				}
+			}
 			items = append(items, taskItem{t: t})
 		}
 	}
@@ -1043,6 +1174,9 @@ func (m *model) applyView() {
 		}
 	}
 	m.list.SetItems(items)
+	// Never leave the cursor parked on a subheader/separator (e.g. when the list
+	// now starts with one).
+	m.snapOffSeparator(true)
 }
 
 // filteredCompleted returns completed tasks narrowed by the active project,
@@ -1705,13 +1839,12 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.list, cmd = m.list.Update(tea.KeyMsg{Type: tea.KeyPgUp})
 		return m, cmd
 	case "up", "down", "k", "j":
-		// Move, then hop over the non-selectable "completed" separator so up/down
-		// jumps straight between tasks.
+		// Move, then hop over any non-selectable subheader/separator so up/down
+		// jumps straight between tasks (snapping the right way at the top edge).
 		var cmd tea.Cmd
 		m.list, cmd = m.list.Update(msg)
-		if it, ok := m.list.SelectedItem().(taskItem); ok && it.sep {
-			m.list, cmd = m.list.Update(msg)
-		}
+		down := msg.String() == "down" || msg.String() == "j"
+		m.snapOffSeparator(down)
 		return m, cmd
 	case "R":
 		// Recently added — last 10 tasks by added date (from cache).

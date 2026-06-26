@@ -32,6 +32,58 @@ func newTestModel() model {
 	return m
 }
 
+func TestSortSubheadersByDateAdded(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 100, 40
+	m.list.SetSize(100, 36)
+	// Two tasks added on different dates → two date subheaders (default sort is
+	// date-added descending).
+	m.cache.Items["a"] = apiItem{ID: "a", Content: "newest", Priority: 1, AddedAt: "2026-06-17T00:00:00Z"}
+	m.cache.Items["b"] = apiItem{ID: "b", Content: "older", Priority: 1, AddedAt: "2026-06-15T00:00:00Z"}
+	m.deriveAll()
+
+	hdrs, tasks := 0, 0
+	for _, it := range m.list.Items() {
+		ti := it.(taskItem)
+		switch {
+		case ti.hdr:
+			hdrs++
+		case !ti.sep:
+			tasks++
+		}
+	}
+	if hdrs != 2 || tasks != 2 {
+		t.Fatalf("expected 2 subheaders + 2 tasks, got hdrs=%d tasks=%d", hdrs, tasks)
+	}
+	// The first row is a subheader, so the cursor must have snapped to a task.
+	if it, ok := m.list.SelectedItem().(taskItem); !ok || it.sep {
+		t.Fatalf("cursor should not start on a subheader, got %+v", m.list.SelectedItem())
+	}
+
+	// All in one group → no subheaders.
+	m2 := newTestModel()
+	m2.width, m2.height = 100, 40
+	m2.list.SetSize(100, 36)
+	m2.cache.Items["a"] = apiItem{ID: "a", Content: "x", Priority: 1, AddedAt: "2026-06-17T00:00:00Z"}
+	m2.cache.Items["b"] = apiItem{ID: "b", Content: "y", Priority: 1, AddedAt: "2026-06-17T00:00:00Z"}
+	m2.deriveAll()
+	for _, it := range m2.list.Items() {
+		if it.(taskItem).hdr {
+			t.Fatal("a single group should produce no subheaders")
+		}
+	}
+}
+
+// firstTask returns the first selectable task row, skipping any subheaders.
+func firstTask(m model) Task {
+	for _, it := range m.list.Items() {
+		if ti, ok := it.(taskItem); ok && !ti.sep {
+			return ti.t
+		}
+	}
+	return Task{}
+}
+
 func TestToTaskPriorityInversion(t *testing.T) {
 	c := newCache()
 	c.Projects["pr"] = apiProject{ID: "pr", Name: "Bills"}
@@ -1281,7 +1333,7 @@ func TestSortByPriority(t *testing.T) {
 	m = nm.(model)
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
 	m = nm.(model)
-	first := m.list.Items()[0].(taskItem).t
+	first := firstTask(m)
 	if first.Priority != "p1" {
 		t.Fatalf("after sort by priority, first should be p1, got %s", first.Priority)
 	}
@@ -1291,7 +1343,7 @@ func TestSortByPriority(t *testing.T) {
 	if !m.sortDesc {
 		t.Fatal("pressing 1 again should reverse the sort")
 	}
-	if m.list.Items()[0].(taskItem).t.Priority != "p4" {
+	if firstTask(m).Priority != "p4" {
 		t.Fatal("reversed priority sort should put p4 first")
 	}
 }
