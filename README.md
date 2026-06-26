@@ -39,9 +39,15 @@ to the server when you sync.
   (`today | overdue`, `#Personal & p1`, `@follow-up`) are evaluated **locally**.
 - **View by Project** (`p`), **filter by priority** (`P`), **ongoing** (`o`),
   **recently added** (`R`).
-- **Open & edit a task** (`Enter`) — change **priority, due date, deadline, labels,
-  name**, add **comments**, or complete it.
-- **Sort** by priority, due date, **deadline**, project, name, labels, or date added (`1`–`7`).
+- **Open & edit a task** (`Enter`) — change **priority, deadline, labels, name**,
+  add **comments**, or complete it. **Due date** (`t`) and **deadline** (`D`) use
+  quick-pick menus (Today / Tomorrow / Next week / recurring / Custom…).
+- **Sort** by priority, due date, **deadline**, project, name, labels, or date added
+  (`1`–`7`). Defaults to **date added, newest first**; set a different default in the
+  `,` menu (it's remembered).
+- **💡 Ideas & mind maps** — press `I` anywhere to capture and browse ideas, each
+  expandable into a navigable mind map; `z` zooms a node's full text in a centered
+  overlay.
 - **Browser-style navigation** — `b` back, `h` home, `H`/`?` (scrollable) help.
 
 ---
@@ -80,6 +86,9 @@ git clone https://github.com/grassbl8d/todo-ui.git
 cd todo-ui
 go build -o todo-ui .      # produces ./todo-ui (todo-ui.exe on Windows)
 ```
+
+> Contributing? See **[`DEVELOPING.md`](DEVELOPING.md)** for the full
+> build / test / versioning / release workflow.
 
 ### Platform notes
 
@@ -271,6 +280,7 @@ shows a 🗺 badge with the node count.
 | `Tab`              | Add a **child** of the selected node                |
 | `Enter`            | Add a **sibling** after the selected node           |
 | `e` / `i`          | Edit the selected node's text                       |
+| `z`                | **Zoom** — overlay the selected node's full text, centered over the (dimmed) map; `z`/`Esc` close |
 | `Space`            | Collapse / expand a branch (`(+n)` marks hidden kids) |
 | `d` / `Del`        | Delete the node and its subtree (asks y/n; a linked Todoist task is left in place) |
 | `t`                | **Mark / unmark as a task** — shows a `[ ]` checkbox |
@@ -354,8 +364,13 @@ Delete these to reset; they're rebuilt on the next sync.
 ### Running the tests
 
 ```bash
-go test ./...
+scripts/run-tests.sh        # go vet + go test ./...  (offline)
+go test ./...               # or call Go directly
 ```
+
+For the live Todoist API check and the full build/release workflow, see
+**[`DEVELOPING.md`](DEVELOPING.md)**. Per-version changes are in
+**[`RELEASE_NOTES.md`](RELEASE_NOTES.md)**.
 
 ---
 
