@@ -27,17 +27,19 @@ and GitHub release are always clean (never `-dev`). Full mechanics:
 
 ## Steps
 
-1. **Preflight.** Ensure a clean working tree (`git status`) and that tests pass:
+1. **Commit pending work, then preflight.** `release.sh` refuses to run on a
+   dirty tree, so **part of doing a release is making the commits**: review
+   `git status`/`git diff` and commit any outstanding feature/fix/doc changes
+   first (focused commits, **no AI attribution**). Then run the tests:
    ```bash
    scripts/run-tests.sh
    ```
-   If a Todoist token is present, the release will also run the live API guard
-   (`scripts/todoist-api-test.sh`); mention that. If the tree is dirty, commit or
-   stash first — `release.sh` refuses to run on a dirty tree.
+   If a Todoist token is present, the release also runs the live API guard
+   (`scripts/todoist-api-test.sh`); mention that.
 
-2. **Resolve the version.** Read `var version` in `main.go` (e.g. `v0.2.2-dev`);
-   the clean release is that minus `-dev` (→ `v0.2.2`). Confirm it with the user.
-   To force a specific version, pass it explicitly (`scripts/release.sh v0.3.0`).
+2. **Resolve the version.** Read `var version` in `internal/todoui/version.go`
+   (e.g. `v0.2.2-dev`); the clean release is that minus `-dev` (→ `v0.2.2`).
+   Confirm it with the user. To force a version: `scripts/release.sh v0.3.0`.
 
 3. **Finalize `RELEASE_NOTES.md`.** Convert the top `## Unreleased — vX.Y.Z-dev`
    heading into a dated, finalized `## vX.Y.Z — YYYY-MM-DD` section (use today's

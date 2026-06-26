@@ -155,10 +155,18 @@ a published artifact.
 
 ## Repo layout (quick orientation)
 
-- `main.go` — model, update/key handling, and view dispatch (the bulk of the TUI).
-- `sync.go` — Todoist Sync API client, token handling, quick-add parsing.
-- `filter.go` — filter expressions and natural-language date parsing.
-- `ideas.go`, `mindmap_view.go` — the 💡 ideas list and 🗺 mind-map view.
-- `*_test.go` — unit tests; `integration_test.go` is the live-API suite (tagged).
+The root is a thin entry point; the app is a single package under
+`internal/todoui/` (Go keeps a package's source and `_test.go` files together,
+so the tests live there too).
+
+- `main.go` (root) — `package main`; just calls `internal/todoui.Main()`.
+- `internal/todoui/main.go` — model, update/key handling, view dispatch, `Main()`.
+- `internal/todoui/version.go` — the build-time `version` var, stamped via
+  `-ldflags "-X github.com/grassbl8d/todo-ui/internal/todoui.version=…"`.
+- `internal/todoui/sync.go` — Todoist Sync API client, token handling, quick-add parsing.
+- `internal/todoui/filter.go` — filter expressions and natural-language date parsing.
+- `internal/todoui/ideas.go`, `internal/todoui/mindmap_view.go` — 💡 ideas and 🗺 mind map.
+- `internal/todoui/*_test.go` — unit tests; `integration_test.go` is the live-API
+  suite (tagged `integration`, run against `./internal/todoui`).
 - `scripts/` — `build-local.sh`, `run-tests.sh`, `todoist-api-test.sh`,
   `release.sh`, `sign-notarize-macos.sh`.

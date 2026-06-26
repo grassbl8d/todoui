@@ -26,6 +26,11 @@ suffix for the upcoming version.
   treated as due-date keywords unless followed by an actual date, so
   "Remind to add this **on** some features" keeps its full title.
 
+### Internal
+- Restructured into a thin root `main.go` plus an `internal/todoui/` package
+  (source and tests together), so the repo root is no longer cluttered with
+  every `.go` file. Build/version ldflags retarget `internal/todoui.version`.
+
 ### Tooling & docs
 - `scripts/release.sh` now manages the `-dev` snapshot version automatically:
   it cuts a clean `vX.Y.Z` tag/release, then bumps `main.go` to the next

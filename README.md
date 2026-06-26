@@ -352,14 +352,19 @@ Delete these to reset; they're rebuilt on the next sync.
 
 ## Project layout
 
-| File           | Purpose                                                                 |
-|----------------|-------------------------------------------------------------------------|
-| `sync.go`      | Todoist Sync API client, local cache, command queue, model translation  |
-| `filter.go`    | Local evaluator for the Todoist filter subset                           |
-| `state.go`     | Persisting the recent-projects list                                     |
-| `todoist.go`   | Shared `Task` / `Project` types                                         |
-| `main.go`      | The Bubble Tea model, update loop, and Lipgloss styling                  |
-| `app_test.go`  | Tests for mapping, filters, parsing, and UI state transitions           |
+The root holds a thin `main.go` entry point; the application lives in
+`internal/todoui/` (source **and** tests together, as Go requires).
+
+| Path                          | Purpose                                                          |
+|-------------------------------|-----------------------------------------------------------------|
+| `main.go`                     | Thin entry point — calls `internal/todoui.Main()`               |
+| `internal/todoui/main.go`     | Bubble Tea model, update loop, Lipgloss styling, `Main()`       |
+| `internal/todoui/version.go`  | Build-time `version` var (stamped via `-ldflags`)               |
+| `internal/todoui/sync.go`     | Todoist Sync API client, local cache, command queue, translation |
+| `internal/todoui/filter.go`   | Local evaluator for the Todoist filter subset                   |
+| `internal/todoui/mindmap_view.go` | 🗺 mind-map rendering (boxes, connectors, zoom overlay)      |
+| `internal/todoui/*_test.go`   | Unit tests for mapping, filters, parsing, and UI state          |
+| `scripts/`                    | `build-local.sh`, `run-tests.sh`, `todoist-api-test.sh`, `release.sh` |
 
 ### Running the tests
 
