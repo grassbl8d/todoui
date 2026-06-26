@@ -26,7 +26,7 @@ NOTARY_PROFILE="${NOTARY_PROFILE:-todoui-notary}"
 cd "$(dirname "$0")/.."
 mkdir -p dist
 
-LD="-s -w -X main.version=${VERSION}"
+LD="-s -w -X github.com/grassbl8d/todo-ui/internal/todoui.version=${VERSION}"
 
 sign_one() {
   local arch="$1"

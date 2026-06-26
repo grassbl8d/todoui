@@ -14,7 +14,7 @@
 // Read-only by default. Set TODOUI_INTEGRATION_WRITE=1 to also run the
 // create→complete→reopen→delete round-trip (it creates a clearly-named task in
 // your Inbox and deletes it again, but it does touch your live account).
-package main
+package todoui
 
 import (
 	"os"

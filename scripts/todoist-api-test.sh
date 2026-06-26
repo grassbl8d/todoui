@@ -24,4 +24,4 @@ if [ -z "${TODOIST_API_TOKEN:-}" ] && [ ! -f "$HOME/.config/todoui/config.json" 
 fi
 
 echo "==> go test -tags integration -run Integration"
-go test -tags integration -run Integration -v -count=1 .
+go test -tags integration -run Integration -v -count=1 ./internal/todoui

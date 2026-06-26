@@ -65,6 +65,11 @@ fi
 
 NOTARY_PROFILE="${NOTARY_PROFILE:-todoui-notary}"
 
+# The app lives in internal/todoui; `var version` is its single source of truth,
+# stamped into builds via -ldflags. VERSION_PKG is its Go import path.
+VERSION_FILE="internal/todoui/version.go"
+VERSION_PKG="github.com/grassbl8d/todo-ui/internal/todoui"
+
 # ---- helpers --------------------------------------------------------------
 bump_patch() {  # v0.1.6 -> v0.1.7
   local v="${1#v}" M rest mi p
@@ -76,15 +81,15 @@ bump_patch() {  # v0.1.6 -> v0.1.7
 # v0.2.2-dev -> v0.2.2, v0.2.2 -> v0.2.2.
 release_ver_of() { echo "${1%%-*}"; }
 
-# bump_to_snapshot advances main.go to the next "-dev" snapshot after a release
-# (e.g. v0.2.2 -> v0.2.3-dev) and commits it, so subsequent builds off the
-# branch self-identify as the upcoming dev version. Pushes unless --no-publish.
-# Relies on $VERSION (the clean release just cut) and $branch being set.
+# bump_to_snapshot advances the version to the next "-dev" snapshot after a
+# release (e.g. v0.2.2 -> v0.2.3-dev) and commits it, so subsequent builds off
+# the branch self-identify as the upcoming dev version. Pushes unless
+# --no-publish. Relies on $VERSION (the clean release just cut) and $branch.
 bump_to_snapshot() {
   local next; next="$(bump_patch "$VERSION")-dev"
-  echo "==> next dev cycle: main.go -> $next"
-  sed -i '' -E "s/^var version = \".*\"/var version = \"$next\"/" main.go
-  git add main.go
+  echo "==> next dev cycle: $VERSION_FILE -> $next"
+  sed -i '' -E "s/^var version = \".*\"/var version = \"$next\"/" "$VERSION_FILE"
+  git add "$VERSION_FILE"
   git commit -q -m "Start $next development"
   if [ "$PUBLISH" != "no" ]; then
     git push origin "$branch" \
@@ -104,8 +109,8 @@ ver_is_taken() {
 
 semver_only() { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; }
 
-SRC_VER="$(grep -E '^var version = ' main.go | sed -E 's/.*"(.*)".*/\1/')"
-[ -n "$SRC_VER" ] || die "couldn't read 'var version' from main.go"
+SRC_VER="$(grep -E '^var version = ' "$VERSION_FILE" | sed -E 's/.*"(.*)".*/\1/')"
+[ -n "$SRC_VER" ] || die "couldn't read 'var version' from $VERSION_FILE"
 # The clean release form of the source version (drops any "-dev" snapshot suffix).
 SRC_REL="$(release_ver_of "$SRC_VER")"
 
@@ -141,10 +146,10 @@ if [ -z "$VERSION" ]; then
   VERSION="$(printf '%s\n%s\n%s\n' "$SRC_REL" "$remote_tags" "$rel_tags" | semver_only | sort -V | tail -1 || true)"
   [ -n "$VERSION" ] || VERSION="$SRC_REL"
   while ver_is_taken "$VERSION"; do VERSION="$(bump_patch "$VERSION")"; done
-  echo "    auto-selected version: $VERSION  (source main.go is $SRC_VER)"
+  echo "    auto-selected version: $VERSION  (source is $SRC_VER)"
 else
   ver_is_taken "$VERSION" && die "version $VERSION is already tagged or released"
-  echo "    version: $VERSION  (source main.go is $SRC_VER)"
+  echo "    version: $VERSION  (source is $SRC_VER)"
 fi
 
 # Warn if a higher local-only tag exists (e.g. a stray/unpushed tag).
@@ -154,11 +159,11 @@ if [ -n "$highest_local" ] && [ "$(printf '%s\n%s\n' "$VERSION" "$highest_local"
   echo "    note: local tag $highest_local is higher than $VERSION but isn't pushed/released; releasing $VERSION."
 fi
 
-# ---- bump main.go if needed -----------------------------------------------
+# ---- bump the version file if needed --------------------------------------
 if [ "$SRC_VER" != "$VERSION" ]; then
-  echo "==> bumping main.go: $SRC_VER -> $VERSION"
-  sed -i '' -E "s/^var version = \".*\"/var version = \"$VERSION\"/" main.go
-  git add main.go
+  echo "==> bumping version: $SRC_VER -> $VERSION"
+  sed -i '' -E "s/^var version = \".*\"/var version = \"$VERSION\"/" "$VERSION_FILE"
+  git add "$VERSION_FILE"
   git commit -q -m "Bump version to $VERSION"
 fi
 
@@ -217,7 +222,7 @@ if [ "$SKIP_TESTS" -eq 0 ]; then
      { [ -n "${TODOIST_API_TOKEN:-}" ] || [ -f "$HOME/.config/todoui/config.json" ] \
        || [ -f "$HOME/.config/todoist/config.json" ]; }; then
     echo "==> integration guard (live Todoist API)"
-    go test -tags integration -run Integration -count=1 . \
+    go test -tags integration -run Integration -count=1 ./internal/todoui \
       || die "Todoist integration guard failed — endpoints may have changed (set SKIP_INTEGRATION=1 to override)"
   else
     echo "    (skipping Todoist integration guard — no token or SKIP_INTEGRATION=1)"
@@ -227,7 +232,7 @@ else
 fi
 
 # ---- build ----------------------------------------------------------------
-LD="-s -w -X main.version=${VERSION}"
+LD="-s -w -X $VERSION_PKG.version=${VERSION}"
 # Start from an empty dist/ so the release only contains this version's artifacts.
 rm -rf dist && mkdir -p dist
 

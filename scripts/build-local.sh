@@ -28,10 +28,10 @@ for arg in "$@"; do
 done
 
 # Mirror release.sh's ldflags so the local binary reports the same version
-# (read from `var version` in main.go; falls back to "dev").
-VERSION="$(sed -n 's/^var version = "\(.*\)"/\1/p' main.go)"
+# (read from internal/todoui/version.go; falls back to "dev").
+VERSION="$(sed -n 's/^var version = "\(.*\)"/\1/p' internal/todoui/version.go)"
 VERSION="${VERSION:-dev}"
-LD="-s -w -X main.version=${VERSION}"
+LD="-s -w -X github.com/grassbl8d/todo-ui/internal/todoui.version=${VERSION}"
 
 if [ "$SKIP_TESTS" -eq 0 ]; then
   echo "==> go vet ./..."

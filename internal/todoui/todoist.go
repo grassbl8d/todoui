@@ -1,4 +1,4 @@
-package main
+package todoui
 
 // Task is one Todoist task in the display model.
 type Task struct {
