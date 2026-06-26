@@ -33,14 +33,32 @@ type quickParsed struct {
 	DueString string // natural-language due, parsed server-side on sync
 }
 
+// dueKeywords are words that, on their own, clearly begin a date phrase.
 var dueKeywords = map[string]bool{
 	"today": true, "tomorrow": true, "tom": true, "tonight": true, "tonite": true,
-	"yesterday": true, "next": true, "every": true, "in": true, "on": true,
-	"mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true, "sun": true,
+	"yesterday": true,
+	"mon":       true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true, "sun": true,
 	"monday": true, "tuesday": true, "wednesday": true, "thursday": true,
 	"friday": true, "saturday": true, "sunday": true,
 	"jan": true, "feb": true, "mar": true, "apr": true, "may": true, "jun": true,
 	"jul": true, "aug": true, "sep": true, "oct": true, "nov": true, "dec": true,
+}
+
+// duePrefixKeywords are qualifiers that begin a date phrase only when the word
+// that follows is itself date-like. On their own they're ordinary English
+// ("work on features", "interested in cooking", "the next big thing"), so we
+// require a lookahead before treating them as the start of a due string.
+var duePrefixKeywords = map[string]bool{
+	"on": true, "in": true, "next": true, "every": true,
+}
+
+// dueUnitWords are the time-unit words that can follow a prefix keyword, e.g.
+// "next week", "in 3 days", "every month".
+var dueUnitWords = map[string]bool{
+	"day": true, "days": true, "week": true, "weeks": true, "weekend": true,
+	"month": true, "months": true, "year": true, "years": true,
+	"hour": true, "hours": true, "min": true, "mins": true,
+	"minute": true, "minutes": true,
 }
 
 // parseQuickAdd extracts @labels, pN priority and a trailing date phrase from a
@@ -60,7 +78,7 @@ func parseQuickAdd(text string) quickParsed {
 			out.Priority = 5 - int(low[1]-'0')
 		case strings.HasPrefix(f, "#"):
 			// project comes from the picker; drop the token
-		case dueStart < 0 && (dueKeywords[low] || looksLikeDate(f)):
+		case dueStart < 0 && startsDatePhrase(fields, i):
 			dueStart = i
 		default:
 			if dueStart < 0 {
@@ -86,6 +104,49 @@ func parseQuickAdd(text string) quickParsed {
 		out.Content = strings.TrimSpace(text) // fallback: never create an empty task
 	}
 	return out
+}
+
+// startsDatePhrase reports whether the token at fields[i] begins a date phrase.
+// Strong keywords and date-like literals qualify on their own; the ambiguous
+// prepositions in duePrefixKeywords ("on", "in", "next", "every") qualify only
+// when the following token is itself date-like — otherwise they're just English
+// (e.g. "work on features", "interested in cooking").
+func startsDatePhrase(fields []string, i int) bool {
+	f := fields[i]
+	low := strings.ToLower(f)
+	if dueKeywords[low] || looksLikeDate(f) {
+		return true
+	}
+	if duePrefixKeywords[low] {
+		return i+1 < len(fields) && dateish(fields[i+1])
+	}
+	return false
+}
+
+// dateish reports whether a single token looks like part of a date: a strong
+// date keyword, a date/time literal, a time-unit word, or a bare number or
+// ordinal (3, 15, 3rd, 21st).
+func dateish(s string) bool {
+	low := strings.ToLower(s)
+	if dueKeywords[low] || dueUnitWords[low] || looksLikeDate(s) {
+		return true
+	}
+	num := low
+	for _, suf := range []string{"st", "nd", "rd", "th"} {
+		if strings.HasSuffix(num, suf) {
+			num = strings.TrimSuffix(num, suf)
+			break
+		}
+	}
+	if num == "" {
+		return false
+	}
+	for _, r := range num {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func looksLikeDate(s string) bool {
