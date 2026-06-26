@@ -1,5 +1,5 @@
 ---
-name: release
+name: release-todo-ui
 description: Cut a todo-ui release. Use when the user asks to release, cut a version, ship, or publish a new version of todo-ui. Finalizes RELEASE_NOTES.md for the version, then runs scripts/release.sh (which versions, tests, signs/notarizes, tags, publishes, and bumps to the next -dev snapshot). Claude runs the release; the user does not run release.sh themselves.
 ---
 
