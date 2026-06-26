@@ -2283,13 +2283,15 @@ func (m model) updateIdeaAdd(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
-		m.mode = modeList
 		m.input.Blur()
 		if text != "" {
 			m.ideas = addIdea(m.ideas, text)
 			SaveIdeas(m.ideas)
 			m.status = "💡 idea saved (" + fmt.Sprintf("%d", len(m.ideas)) + ")"
 		}
+		// Land on the ideas list (newest idea on top) so the capture is visible.
+		m.ideaCursor = 0
+		m.mode = modeIdeaList
 		return m, nil
 	}
 	var cmd tea.Cmd

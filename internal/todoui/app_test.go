@@ -806,14 +806,9 @@ func TestIdeaCatcherFlow(t *testing.T) {
 	if len(m.ideas) != 1 || m.ideas[0].Text != "ship it" {
 		t.Fatalf("idea should be captured, got %+v", m.ideas)
 	}
-	if m.mode != modeList {
-		t.Fatal("after capture should return to the list")
-	}
-	// I shows the list
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("I")})
-	m = nm.(model)
+	// After capturing, land directly on the ideas list showing the new idea.
 	if m.mode != modeIdeaList || !strings.Contains(m.View(), "Ideas (1)") {
-		t.Fatal("I should show the captured ideas")
+		t.Fatal("after capture should land on the ideas list")
 	}
 	// x deletes
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x")})

@@ -98,6 +98,27 @@ func TestIdeaListCaptureAndLegend(t *testing.T) {
 	}
 }
 
+func TestIdeaCaptureLandsOnIdeaList(t *testing.T) {
+	m := mindModel(t)
+	m.ideas = nil
+	m.mode = modeIdeaList
+	m = key(m, 'i') // open capture
+	if m.mode != modeIdeaAdd {
+		t.Fatalf("i should open capture, mode=%d", m.mode)
+	}
+	m = typeText(m, "ship it")
+	m = keyType(m, tea.KeyEnter) // save
+	if m.mode != modeIdeaList {
+		t.Fatalf("after saving an idea, should land on the ideas list, mode=%d", m.mode)
+	}
+	if len(m.ideas) != 1 || m.ideas[0].Text != "ship it" {
+		t.Fatalf("idea not saved: %+v", m.ideas)
+	}
+	if m.ideaCursor != 0 {
+		t.Fatalf("cursor should highlight the new (newest) idea, got %d", m.ideaCursor)
+	}
+}
+
 func TestIdeaListHomeKey(t *testing.T) {
 	m := mindModel(t)
 	m.mode = modeIdeaList
