@@ -640,12 +640,15 @@ func (c *Cache) Merge(sr *syncResponse) {
 		c.Labels = map[string]apiLabel{}
 		c.Notes = map[string]apiNote{}
 	}
-	for _, real := range sr.TempIDMapping {
-		_ = real
-	}
+	// Drop the optimistic temp-id placeholders now that the server has assigned
+	// real ids. This must cover projects and labels too — otherwise a project
+	// created via the mind map's T flow lingers under its tmp- id forever,
+	// showing up as a ghost duplicate next to its real synced entry.
 	for temp := range sr.TempIDMapping {
 		delete(c.Items, temp)
 		delete(c.Notes, temp)
+		delete(c.Projects, temp)
+		delete(c.Labels, temp)
 	}
 	for _, it := range sr.Items {
 		if it.IsDeleted {
@@ -676,6 +679,55 @@ func (c *Cache) Merge(sr *syncResponse) {
 		}
 	}
 	c.SyncToken = sr.SyncToken
+}
+
+// PruneOrphanTemps removes optimistic tmp- cache entries that are no longer
+// backed by a pending command. An optimistic entry is only valid while the
+// command that creates it sits in the queue; once that command has flushed and
+// the real id has synced, any leftover tmp- entry is a ghost — e.g. a project
+// created via the mind map's T flow before temp projects were cleaned on merge,
+// which otherwise shows up as a duplicate next to its real synced entry.
+// pending holds the TempIDs of commands still queued, which must be kept.
+func (c *Cache) PruneOrphanTemps(pending map[string]bool) int {
+	removed := 0
+	orphan := func(id string) bool { return strings.HasPrefix(id, "tmp-") && !pending[id] }
+	for id := range c.Projects {
+		if orphan(id) {
+			delete(c.Projects, id)
+			removed++
+		}
+	}
+	for id := range c.Items {
+		if orphan(id) {
+			delete(c.Items, id)
+			removed++
+		}
+	}
+	for id := range c.Notes {
+		if orphan(id) {
+			delete(c.Notes, id)
+			removed++
+		}
+	}
+	for id := range c.Labels {
+		if orphan(id) {
+			delete(c.Labels, id)
+			removed++
+		}
+	}
+	return removed
+}
+
+// pendingTempIDs collects the temp ids of commands still waiting in the queue,
+// so PruneOrphanTemps keeps their optimistic cache entries.
+func pendingTempIDs(queue []Command) map[string]bool {
+	s := map[string]bool{}
+	for _, cmd := range queue {
+		if cmd.TempID != "" {
+			s[cmd.TempID] = true
+		}
+	}
+	return s
 }
 
 // ---------- translation to the display model ----------
