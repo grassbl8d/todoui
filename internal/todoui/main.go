@@ -440,77 +440,79 @@ const (
 )
 
 type model struct {
-	list          list.Model
-	projList      list.Model
-	input         textinput.Model
-	mode          mode
-	pickIntent    pickIntent  // what the project picker is for (add vs view)
-	projects      []Project   // all projects (source for the picker)
-	allTasks      []Task      // full set from the last server load
-	filter        string      // active server-side Todoist filter (working value)
-	textQuery     string      // local case-insensitive text search (working value)
-	projectView   string      // local project filter, display name e.g. "#Bills" (working value)
-	priorityView  string      // local priority filter "p1".."p4" (working value)
-	prioCursor    int         // cursor in the priority picker
-	cache         *Cache      // local offline-first snapshot
-	queue         []Command   // pending Sync API commands (flushed on sync)
-	syncing       bool        // a sync is in flight
-	syncBg        bool        // the in-flight sync is a background auto-sync
-	spinFrame     int         // animation frame for the sync progress bar
-	completedView int         // 0 active only · 1 active+completed · 2 completed only
-	online        bool        // last sync succeeded
-	current       viewState   // the committed view currently shown
-	history       []viewState // back-stack of previously committed views
-	sortMode      sortMode    // current ordering of the task list
-	sortDesc      bool        // reverse the current ordering
-	detailTask    Task        // task shown in the detail view
-	detailID      string      // id of the task in the detail view
-	editField     editField   // which field the detail editor is editing
-	comments      []Comment   // comments for the task in the detail view
-	commentErr    string      // error from the last comment fetch/post
-	recentView    bool        // showing the recently-added tasks
-	recentIDs     []string    // task IDs in recently-added order
-	onlineView    bool        // showing online (server filter) search results
-	onlineResults []Task      // results of the last online search
-	onlineQuery   string      // last online query (for the header)
-	searching     bool        // online search in flight
-	onboardErr    string      // error shown on the onboarding screen
-	checking      bool        // validating the token
-	projQuery     string      // type-to-filter text in the project picker
-	settings      Settings    // user preferences (ongoing label, sync interval)
-	tickGen       int         // generation guard for the auto-sync ticker
-	optCursor     int         // selected row on the options page
-	tzAll         []string    // all selectable IANA zone names (loaded on first open)
-	tzQuery       string      // type-to-filter text in the timezone picker
-	tzCursor      int         // selected row in the timezone picker
-	palQuery      string      // type-to-filter text in the ` quick-action palette
-	palCursor     int         // selected row in the quick-action palette
-	pinnedID      string      // when set, only this task is shown (focus mode)
-	showComments  bool        // on the pinned focus screen, show the comments list
-	projDelTarget Project     // project pending delete-confirmation
-	ideas         []Idea      // locally-captured ideas (newest first)
-	ideaCursor    int         // selected row in the idea list
-	mindIdea      int         // index into ideas of the mind map being edited
-	mindCursor    int         // selected row in the flattened mind-map tree
-	mindEditNode  *MindNode   // node whose text is being edited (nil = the root idea)
-	mindEditNew   bool        // the edited node was just created (esc/empty discards it)
-	mindZoom      bool        // zoom (z): overlay the selected node's full text on the map
-	mindOverview  bool        // overview (Z): full-screen, all-expanded, read-only map
-	mindSearch    string      // active /-search query in the mind map (n/N cycle matches)
-	mindClip      *MindNode   // cut/copy clipboard (a detached subtree) for x/c/v paste
-	mindUndo      []string    // mind-map undo stack: idea-tree snapshots before each change
-	dlCursor      int         // selected row in the deadline picker
-	dueCursor     int         // selected row in the due-date picker
-	homeFlash     bool        // brief highlight of the home/clear hint when pressed
-	helpOffset    int         // scroll offset of the help page
-	addProject    Project     // project chosen for the task currently being added
-	recents       []Project   // recently-chosen projects, most recent first (persisted)
-	status        string
-	statusSeq     int           // bumped on each transient status, so auto-clear only wipes the latest
-	statusFlash   time.Duration // per-status auto-clear override (0 = use statusTTL); reset after each key
-	err           string
-	width         int
-	height        int
+	list           list.Model
+	projList       list.Model
+	input          textinput.Model
+	mode           mode
+	pickIntent     pickIntent  // what the project picker is for (add vs view)
+	projects       []Project   // all projects (source for the picker)
+	allTasks       []Task      // full set from the last server load
+	filter         string      // active server-side Todoist filter (working value)
+	textQuery      string      // local case-insensitive text search (working value)
+	projectView    string      // local project filter, display name e.g. "#Bills" (working value)
+	priorityView   string      // local priority filter "p1".."p4" (working value)
+	prioCursor     int         // cursor in the priority picker
+	cache          *Cache      // local offline-first snapshot
+	queue          []Command   // pending Sync API commands (flushed on sync)
+	syncing        bool        // a sync is in flight
+	syncBg         bool        // the in-flight sync is a background auto-sync
+	spinFrame      int         // animation frame for the sync progress bar
+	completedView  int         // 0 active only · 1 active+completed · 2 completed only
+	online         bool        // last sync succeeded
+	current        viewState   // the committed view currently shown
+	history        []viewState // back-stack of previously committed views
+	sortMode       sortMode    // current ordering of the task list
+	sortDesc       bool        // reverse the current ordering
+	detailTask     Task        // task shown in the detail view
+	detailID       string      // id of the task in the detail view
+	editField      editField   // which field the detail editor is editing
+	comments       []Comment   // comments for the task in the detail view
+	commentErr     string      // error from the last comment fetch/post
+	recentView     bool        // showing the recently-added tasks
+	recentIDs      []string    // task IDs in recently-added order
+	onlineView     bool        // showing online (server filter) search results
+	onlineResults  []Task      // results of the last online search
+	onlineQuery    string      // last online query (for the header)
+	searching      bool        // online search in flight
+	onboardErr     string      // error shown on the onboarding screen
+	checking       bool        // validating the token
+	projQuery      string      // type-to-filter text in the project picker
+	settings       Settings    // user preferences (ongoing label, sync interval)
+	tickGen        int         // generation guard for the auto-sync ticker
+	optCursor      int         // selected row on the options page
+	tzAll          []string    // all selectable IANA zone names (loaded on first open)
+	tzQuery        string      // type-to-filter text in the timezone picker
+	tzCursor       int         // selected row in the timezone picker
+	palQuery       string      // type-to-filter text in the ` quick-action palette
+	palCursor      int         // selected row in the quick-action palette
+	pinnedID       string      // when set, only this task is shown (focus mode)
+	showComments   bool        // on the pinned focus screen, show the comments list
+	projDelTarget  Project     // project pending delete-confirmation
+	ideas          []Idea      // locally-captured ideas (newest first)
+	ideaCursor     int         // selected row in the idea list
+	mindIdea       int         // index into ideas of the mind map being edited
+	mindCursor     int         // selected row in the flattened mind-map tree
+	mindEditNode   *MindNode   // node whose text is being edited (nil = the root idea)
+	mindEditNew    bool        // the edited node was just created (esc/empty discards it)
+	mindZoom       bool        // zoom (z): overlay the selected node's full text on the map
+	mindOverview   bool        // overview (Z): full-screen, all-expanded, read-only map
+	mindFullLabels bool        // d: show full (untruncated) node labels in the normal map
+	mindSearch     string      // active /-search query in the mind map (n/N cycle matches)
+	mindClip       *MindNode   // cut/copy clipboard (a detached subtree) for x/c/v paste
+	mindUndo       []string    // mind-map undo stack: idea-tree snapshots before each change
+	dlCursor       int         // selected row in the deadline picker
+	dueCursor      int         // selected row in the due-date picker
+	homeFlash      bool        // brief highlight of the home/clear hint when pressed
+	optReturn      mode        // mode to return to when the settings menu closes
+	helpOffset     int         // scroll offset of the help page
+	addProject     Project     // project chosen for the task currently being added
+	recents        []Project   // recently-chosen projects, most recent first (persisted)
+	status         string
+	statusSeq      int           // bumped on each transient status, so auto-clear only wipes the latest
+	statusFlash    time.Duration // per-status auto-clear override (0 = use statusTTL); reset after each key
+	err            string
+	width          int
+	height         int
 }
 
 // messages
@@ -1254,19 +1256,42 @@ func dateSortKey(s string) string {
 	return s
 }
 
+// dateLess reports whether a sorts before b for a date column. Dated entries
+// always sort before undated ones (so "no date" stays last in BOTH directions);
+// among dated entries, desc reverses the order.
+func dateLess(a, b string, desc bool) bool {
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if (a == "") != (b == "") {
+		return b == "" // a is dated, b isn't → a first; undated always last
+	}
+	if a == "" { // both undated — keep stable
+		return false
+	}
+	if desc {
+		return a > b
+	}
+	return a < b
+}
+
 // sortTasks orders ts in place according to the current sort mode/direction.
 func (m *model) sortTasks(ts []Task) {
 	if m.sortMode == sortNone {
+		return
+	}
+	// Date sorts keep undated tasks last in both directions (handled in dateLess),
+	// so they can't bubble to the top when reversed.
+	switch m.sortMode {
+	case sortDue:
+		sort.SliceStable(ts, func(i, j int) bool { return dateLess(ts[i].DueDate, ts[j].DueDate, m.sortDesc) })
+		return
+	case sortDeadline:
+		sort.SliceStable(ts, func(i, j int) bool { return dateLess(ts[i].Deadline, ts[j].Deadline, m.sortDesc) })
 		return
 	}
 	var less func(i, j int) bool
 	switch m.sortMode {
 	case sortPriority:
 		less = func(i, j int) bool { return ts[i].Priority < ts[j].Priority }
-	case sortDue:
-		less = func(i, j int) bool { return dateSortKey(ts[i].DueDate) < dateSortKey(ts[j].DueDate) }
-	case sortDeadline:
-		less = func(i, j int) bool { return dateSortKey(ts[i].Deadline) < dateSortKey(ts[j].Deadline) }
 	case sortProject:
 		less = func(i, j int) bool {
 			return strings.ToLower(ts[i].Project) < strings.ToLower(ts[j].Project)
@@ -1749,22 +1774,44 @@ func projectsHotkeyMode(mo mode) bool {
 	return false
 }
 
-// homeHotkeyMode reports where the global "h" → home jump applies. modeList,
-// modeDetail and modeIdeaList already bind "h" themselves; modeMindMap is
-// excluded because there "h" is parent navigation (paired with "l").
+// homeHotkeyMode reports where the global "." → home jump applies. modeList,
+// modeDetail and modeIdeaList bind "." themselves; the rest (including the mind
+// map, where "h" is parent navigation) go through navHotkey.
 func homeHotkeyMode(mo mode) bool {
 	switch mo {
-	case modeHelp, modeAbout, modeOptions:
+	case modeHelp, modeAbout, modeOptions, modeMindMap:
 		return true
 	}
 	return false
 }
 
-// navHotkey handles the global p (→ projects) / h (→ home) shortcuts. It returns
-// handled=false when the key isn't one of those or the current mode opts out, so
-// the caller falls through to the normal per-mode handler.
+// menuHotkeyMode reports where the global "," → settings menu applies. modeList
+// keeps its own handler (so focus/pin mode can suppress it); exiting the menu
+// returns to whichever of these modes opened it.
+func menuHotkeyMode(mo mode) bool {
+	switch mo {
+	case modeDetail, modeHelp, modeAbout, modeIdeaList, modeMindMap:
+		return true
+	}
+	return false
+}
+
+// navHotkey handles the global p (→ projects) / h (→ home) / , (→ menu)
+// shortcuts. It returns handled=false when the key isn't one of those or the
+// current mode opts out, so the caller falls through to the per-mode handler.
 func (m model) navHotkey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 	switch msg.String() {
+	case ",":
+		if !menuHotkeyMode(m.mode) {
+			return m, nil, false
+		}
+		// Remember where we came from so exiting the menu returns here, then open
+		// it. Mind-map / overview / zoom state is preserved for the return trip.
+		m.optReturn = m.mode
+		m.mode = modeOptions
+		m.optCursor = 0
+		m.err = ""
+		return m, nil, true
 	case "p":
 		if !projectsHotkeyMode(m.mode) {
 			return m, nil, false
@@ -1781,17 +1828,28 @@ func (m model) navHotkey(msg tea.KeyMsg) (model, tea.Cmd, bool) {
 		m.setPickerItems()
 		m.selectLastProject()
 		return m, nil, true
-	case "h":
+	case ".":
 		if !homeHotkeyMode(m.mode) {
 			return m, nil, false
 		}
-		m.mode = modeList
-		m.homeFlash = true
-		cmd := m.commit(viewState{})
-		flash := tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return homeFlashOffMsg{} })
-		return m, tea.Batch(cmd, flash), true
+		if m.mode == modeMindMap {
+			SaveIdeas(m.ideas) // persist the map before jumping home
+		}
+		return m, m.goHome(), true
 	}
 	return m, nil, false
+}
+
+// goHome returns to the initial screen: the task list ordered by the configured
+// default sort, with all filters/views cleared and a brief flash. Used by every
+// "home" entry point so they behave identically.
+func (m *model) goHome() tea.Cmd {
+	m.sortMode, m.sortDesc = parseDefaultSort(m.settings.DefaultSort)
+	m.mode = modeList
+	m.homeFlash = true
+	cmd := m.commit(viewState{})
+	flash := tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return homeFlashOffMsg{} })
+	return tea.Batch(cmd, flash)
 }
 
 func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1992,7 +2050,8 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.Focus()
 		return m, textinput.Blink
 	case ",":
-		// Menu (settings).
+		// Menu (settings). Exiting returns here (the task list).
+		m.optReturn = modeList
 		m.mode = modeOptions
 		m.optCursor = 0
 		m.err = ""
@@ -2104,12 +2163,9 @@ func (m model) updateList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(syncNowCmd(m.cache.SyncToken, m.queue), spinnerTick())
 	case "b":
 		return m, m.goBack()
-	case "h", "esc":
-		// Home — clear all filters/views (undoable with b), with a brief flash.
-		m.homeFlash = true
-		cmd := m.commit(viewState{})
-		flash := tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return homeFlashOffMsg{} })
-		return m, tea.Batch(cmd, flash)
+	case ".", "esc":
+		// Home — reset to the default sort with all filters/views cleared.
+		return m, m.goHome()
 	case "H":
 		m.mode = modeHelp
 		m.helpOffset = 0
@@ -2160,15 +2216,8 @@ func (m *model) setSort(s sortMode) {
 		m.sortDesc = s == sortAdded
 	}
 	m.applyView()
-	if s == sortNone {
-		m.status = "sort: default order"
-		return
-	}
-	dir := "↑"
-	if m.sortDesc {
-		dir = "↓"
-	}
-	m.status = fmt.Sprintf("sort: %s %s — %d", s.label(), dir, len(m.list.Items()))
+	// No status message — the dedicated sort bar at the bottom shows the active
+	// sort and direction.
 }
 
 // allProjectsID is the sentinel for the "All Projects" picker entry (view mode).
@@ -2622,10 +2671,9 @@ func (m model) updateIdeaList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "q", "I", "b":
 		m.mode = modeList
 		return m, nil
-	case "h":
-		// Home — back to the task list with filters cleared.
-		m.mode = modeList
-		return m, m.commit(viewState{})
+	case ".":
+		// Home — back to the task list at the default sort, filters cleared.
+		return m, m.goHome()
 	case "i":
 		// 💡 Catch a new idea (same capture flow as the task list).
 		m.mode = modeIdeaAdd
@@ -2642,6 +2690,7 @@ func (m model) updateIdeaList(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mindCursor = 0
 			m.mindZoom = false
 			m.mindOverview = false
+			m.mindFullLabels = false
 			m.mindSearch = "" // don't carry a stale search into a fresh map
 			m.mindUndo = nil  // undo history is per-map session
 			m.status = ""
@@ -2984,6 +3033,16 @@ func (m model) updateMindMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Jump back to the root node (left-most / first node).
 		m.mindCursor = 0
 		return m, nil
+	case "d":
+		// Toggle full (untruncated) node labels in the normal map — the same
+		// display the overview uses, but navigable.
+		m.mindFullLabels = !m.mindFullLabels
+		if m.mindFullLabels {
+			m.status = "full labels on"
+		} else {
+			m.status = "full labels off"
+		}
+		return m, nil
 	case "u":
 		// Undo the last mind-map change (paste, cut, delete, reorder, edit, …).
 		if len(m.mindUndo) == 0 {
@@ -3103,38 +3162,67 @@ func (m model) updateMindMap(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mindCursor = m.mindIndexOf(cur.node)
 		m.status = "promoted to its parent's sibling"
 		return m, nil
-	case "o", "O", "f", "F":
-		// Colour cycling: o/O = outline, f/F = background fill; uppercase also
-		// paints every descendant. The root's colour lives on the idea itself.
-		// (c/v are cut/paste, so colour moved to o = Outline and f = Fill.)
+	case "o", "O", "f", "F", "g", "G":
+		// Colour cycling on the selected node (or the idea, at the root):
+		//   o/O = Outline (border) · f/F = Font (text) · g/G = backGround fill.
+		// Uppercase also paints every descendant. (c/v are cut/paste.)
 		key := msg.String()
-		subtree := key == "O" || key == "F"
-		outline := key == "o" || key == "O"
+		subtree := key == "O" || key == "F" || key == "G"
+		lower := strings.ToLower(key)
+		var attr *int
+		var kids *[]*MindNode
 		if cur.isRoot {
 			idea := &m.ideas[m.mindIdea]
-			if outline {
-				idea.Color = nextMindColor(idea.Color)
-				if subtree {
-					setSubtreeOutline(idea.Children, idea.Color)
-				}
-			} else {
-				idea.BG = nextMindColor(idea.BG)
-				if subtree {
-					setSubtreeBG(idea.Children, idea.BG)
-				}
+			kids = &idea.Children
+			switch lower {
+			case "o":
+				attr = &idea.Color
+			case "f":
+				attr = &idea.FG
+			case "g":
+				attr = &idea.BG
 			}
 		} else {
-			if outline {
-				cur.node.Color = nextMindColor(cur.node.Color)
-				if subtree {
-					setSubtreeOutline(cur.node.Children, cur.node.Color)
-				}
-			} else {
-				cur.node.BG = nextMindColor(cur.node.BG)
-				if subtree {
-					setSubtreeBG(cur.node.Children, cur.node.BG)
-				}
+			kids = &cur.node.Children
+			switch lower {
+			case "o":
+				attr = &cur.node.Color
+			case "f":
+				attr = &cur.node.FG
+			case "g":
+				attr = &cur.node.BG
 			}
+		}
+		*attr = nextMindColor(*attr)
+		if subtree {
+			switch lower {
+			case "o":
+				setSubtreeOutline(*kids, *attr)
+			case "f":
+				setSubtreeFG(*kids, *attr)
+			case "g":
+				setSubtreeBG(*kids, *attr)
+			}
+		}
+		SaveIdeas(m.ideas)
+		return m, nil
+	case "y", "Y":
+		// Cycle the node's text style: normal → bold → italic → underline.
+		// y = this node, Y = node + all children (mirrors the colour pairs).
+		subtree := msg.String() == "Y"
+		if cur.isRoot {
+			idea := &m.ideas[m.mindIdea]
+			idea.Style = nextMindStyle(idea.Style)
+			if subtree {
+				setSubtreeStyle(idea.Children, idea.Style)
+			}
+			m.status = "style: " + mindStyleNames[idea.Style]
+		} else {
+			cur.node.Style = nextMindStyle(cur.node.Style)
+			if subtree {
+				setSubtreeStyle(cur.node.Children, cur.node.Style)
+			}
+			m.status = "style: " + mindStyleNames[cur.node.Style]
 		}
 		SaveIdeas(m.ideas)
 		return m, nil
@@ -3762,10 +3850,9 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc", "b", "q", "enter":
 		m.mode = modeList
 		return m, nil
-	case "h":
-		// Home — close detail and go to the home view.
-		m.mode = modeList
-		return m, m.commit(viewState{})
+	case ".":
+		// Home — close detail and go to the home view (default sort).
+		return m, m.goHome()
 	case "^":
 		// Pin the task being viewed → focus mode.
 		if m.detailID != "" {
@@ -4008,8 +4095,12 @@ func (m model) optionRows() []struct{ label, value string } {
 		{"Default sort", sortVal + "  (enter to cycle)"},
 		{"Mind-map underline", m.settings.MindUnderline + "  (enter to cycle)"},
 		{"Status auto-clear", statusSecondsLabel(m.settings.StatusSeconds) + "  (enter to cycle)"},
+		{"Node label width", fmt.Sprintf("%d chars  (enter to cycle)", m.settings.NodeLabelLen)},
 	}
 }
+
+// nodeLabelLenCycle is the order the "Node label width" menu steps through.
+var nodeLabelLenCycle = []int{24, 36, 48, 64, 80}
 
 // statusSecondsCycle is the order the "Status auto-clear" menu steps through.
 var statusSecondsCycle = []int{3, 5, 10, 30, -1} // -1 = off
@@ -4028,7 +4119,9 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc", "q", "b", "O":
-		m.mode = modeList
+		// Return to whichever screen opened the menu (task list by default).
+		m.mode = m.optReturn
+		m.optReturn = modeList
 		return m, nil
 	case "up", "k":
 		if m.optCursor > 0 {
@@ -4104,6 +4197,20 @@ func (m model) updateOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settings.StatusSeconds = statusSecondsCycle[(idx+1)%len(statusSecondsCycle)]
 			m.settings.Save()
 			m.status = "status auto-clear: " + statusSecondsLabel(m.settings.StatusSeconds)
+			return m, nil
+		}
+		if m.optCursor == 9 {
+			// Mind-map node label width cycles in place (24 → 36 → 48 → 64 → 80).
+			idx := 0
+			for i, w := range nodeLabelLenCycle {
+				if w == m.settings.NodeLabelLen {
+					idx = i
+					break
+				}
+			}
+			m.settings.NodeLabelLen = nodeLabelLenCycle[(idx+1)%len(nodeLabelLenCycle)]
+			m.settings.Save()
+			m.status = fmt.Sprintf("node label width: %d chars", m.settings.NodeLabelLen)
 			return m, nil
 		}
 		m.mode = modeOptionsEdit
@@ -4515,7 +4622,7 @@ func (m model) ideaView(header string) string {
 			rows = append(rows,
 				dim.Render("No ideas yet — press i to catch one."),
 				"",
-				dim.Render("i catch · b back · h home"),
+				dim.Render("i catch · b back · . home"),
 			)
 		} else {
 			for i, idea := range m.ideas {
@@ -4532,7 +4639,7 @@ func (m model) ideaView(header string) string {
 				text := txtStyle.Width(innerW).Render(strings.ReplaceAll(strings.TrimSpace(idea.Text), "\n", " "))
 				rows = append(rows, cur+when, "  "+text, "")
 			}
-			rows = append(rows, dim.Render("j/k move · enter open map · i catch · R rename · x delete · p projects · b back · h home"))
+			rows = append(rows, dim.Render("j/k move · enter open map · i catch · R rename · x delete · p projects · b back · . home"))
 		}
 	}
 
@@ -5239,7 +5346,7 @@ func helpLines() []string {
 		row("↑/↓ j/k", "Move selection"),
 		row("n / v", "Next page / previous page (also pgdn/pgup)"),
 		row("b", "Back — return to the previous view (like a browser)"),
-		row("h / esc", "Home — clear all filters & views, back to all tasks"),
+		row(". / esc", "Home — clear all filters & views, back to all tasks"),
 		row("q ctrl+c", "Quit"),
 		"",
 		head.Render("  Tasks"),
@@ -5435,20 +5542,52 @@ func (m model) footer() string {
 		statusLine = errStyle.Render("⚠ " + m.err)
 	}
 
-	// "H help" and "h home" first and accented so they're always visible even if clipped.
+	// Only "H help" stands out (accented). ". home/clear" is plain at rest but
+	// briefly flashes when pressed; ", menu" sits right after it.
 	accentKey := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
-	keys := "q quit · a add · enter view · c done · x del · ^ pin · i idea · I 💡 ideas · / find · p project · O/F tag · , menu · s sync"
-	homeHint := accentKey.Render("h home/clear")
+	homeHint := helpStyle.Render(". home/clear")
 	if m.homeFlash {
-		homeHint = lipgloss.NewStyle().Background(brandRed).Foreground(brightColor).Bold(true).Render(" h home/clear ")
+		homeHint = lipgloss.NewStyle().Background(brandRed).Foreground(brightColor).Bold(true).Render(" . home/clear ")
 	}
+	keys := "q quit · a add · enter view · c done · x del · ^ pin · i idea · I 💡 ideas · / find · p project · O/F tag · s sync"
 	right := accentKey.Render("H help") + helpStyle.Render(" · ") + homeHint +
-		helpStyle.Render(" · "+keys)
+		helpStyle.Render(" · , menu · "+keys)
 	gap := m.width - lipgloss.Width(statusLine) - lipgloss.Width(right)
+	var hints string
 	if gap < 1 {
-		return lipgloss.JoinVertical(lipgloss.Left, statusLine, right)
+		hints = lipgloss.JoinVertical(lipgloss.Left, statusLine, right)
+	} else {
+		hints = lipgloss.JoinHorizontal(lipgloss.Top, statusLine, strings.Repeat(" ", gap), right)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, statusLine, strings.Repeat(" ", gap), right)
+	// Dedicated sort bar (mirrors the mind map's styling bar) pinned at the very
+	// bottom: the sort options with their keys, the active one highlighted.
+	return lipgloss.JoinVertical(lipgloss.Left, hints, m.sortBar())
+}
+
+// sortBar renders the task-list sort options as a dedicated footer row, with the
+// active sort accented and showing its ↑/↓ direction.
+func (m model) sortBar() string {
+	accent := lipgloss.NewStyle().Foreground(brandRed).Bold(true)
+	opts := []struct {
+		key string
+		s   sortMode
+	}{
+		{"1", sortPriority}, {"2", sortDue}, {"3", sortDeadline},
+		{"4", sortProject}, {"5", sortName}, {"6", sortLabels}, {"7", sortAdded},
+	}
+	parts := make([]string, 0, len(opts))
+	for _, o := range opts {
+		if m.sortMode == o.s {
+			dir := "↑"
+			if m.sortDesc {
+				dir = "↓"
+			}
+			parts = append(parts, accent.Render(o.key+" "+o.s.label()+" "+dir))
+		} else {
+			parts = append(parts, helpStyle.Render(o.key+" "+o.s.label()))
+		}
+	}
+	return helpStyle.Render("⇅ sort  ") + strings.Join(parts, helpStyle.Render(" · "))
 }
 
 // Main is the program entry point, invoked by the thin root main package.

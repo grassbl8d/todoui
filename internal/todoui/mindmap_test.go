@@ -87,7 +87,7 @@ func TestIdeaListCaptureAndLegend(t *testing.T) {
 
 	// The empty state must still advertise the shortcuts.
 	v := m.View()
-	if !strings.Contains(v, "i catch") || !strings.Contains(v, "b back") || !strings.Contains(v, "h home") {
+	if !strings.Contains(v, "i catch") || !strings.Contains(v, "b back") || !strings.Contains(v, ". home") {
 		t.Fatalf("empty ideas list should show i/b/h shortcuts, got:\n%s", v)
 	}
 
@@ -122,9 +122,9 @@ func TestIdeaCaptureLandsOnIdeaList(t *testing.T) {
 func TestIdeaListHomeKey(t *testing.T) {
 	m := mindModel(t)
 	m.mode = modeIdeaList
-	m = key(m, 'h') // home → back to the task list
+	m = key(m, '.') // home → back to the task list
 	if m.mode != modeList {
-		t.Fatalf("h should return to the task list, mode=%d", m.mode)
+		t.Fatalf(". should return to the task list, mode=%d", m.mode)
 	}
 }
 
@@ -323,11 +323,11 @@ func TestGlobalProjectsAndHomeFromMenus(t *testing.T) {
 		t.Fatalf("p should open projects from help, got mode=%v", m.mode)
 	}
 
-	// h from the options screen → home (task list).
+	// . from the options screen → home (task list).
 	m.mode = modeOptions
-	m = key(m, 'h')
+	m = key(m, '.')
 	if m.mode != modeList {
-		t.Fatalf("h should go home from options, got %v", m.mode)
+		t.Fatalf(". should go home from options, got %v", m.mode)
 	}
 }
 
@@ -563,8 +563,52 @@ func TestIdeaListProjectsHotkey(t *testing.T) {
 	}
 }
 
+func TestMindMapFullLabelToggle(t *testing.T) {
+	m := mindModel(t)
+	m.settings.NodeLabelLen = 26
+	long := "Should be able to generate a full compose file from scratch"
+	m.ideas = []Idea{{Text: "Root", At: nowStamp(), Children: []*MindNode{{Text: long}}}}
+	m.ideaCursor = 0
+	m = keyType(m, tea.KeyEnter)
+	m = key(m, 'l')
+
+	// Normal view truncates the long label.
+	if strings.Contains(m.View(), long) {
+		t.Fatal("normal view should truncate the long label")
+	}
+
+	// d toggles full labels on → the whole label shows.
+	m = key(m, 'd')
+	if !m.mindFullLabels {
+		t.Fatal("d should turn on full labels")
+	}
+	if !strings.Contains(m.View(), long) {
+		t.Fatalf("full labels should show the whole text, got:\n%s", m.View())
+	}
+
+	// d again turns it back off (truncated again).
+	m = key(m, 'd')
+	if m.mindFullLabels || strings.Contains(m.View(), long) {
+		t.Fatal("d again should restore truncation")
+	}
+}
+
+func TestNodeLabelWidthMenuCycles(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := newTestModel()
+	m.settings.NodeLabelLen = 48
+	m.mode = modeOptions
+	m.optCursor = 9 // "Node label width"
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(model)
+	if m.settings.NodeLabelLen != 64 { // 48 → 64 in the cycle
+		t.Fatalf("cycling from 48 should give 64, got %d", m.settings.NodeLabelLen)
+	}
+}
+
 func TestMindMapCollapsedBadgeSurvivesLongLabel(t *testing.T) {
 	m := mindModel(t)
+	m.settings.NodeLabelLen = 26 // force truncation regardless of the default width
 	m.ideas = []Idea{{Text: "Root", At: nowStamp(), Children: []*MindNode{
 		{Text: "Show the current Kube Context and the routes", Collapsed: true,
 			Children: []*MindNode{{Text: "the only child"}}},
@@ -644,16 +688,13 @@ func TestMindMapOverviewExpandsAndIsReadOnly(t *testing.T) {
 	if !strings.Contains(v, "Hidden G") {
 		t.Fatalf("overview should expand collapsed branches, got:\n%s", v)
 	}
-	// Full-screen: the app header and title chrome are dropped; only a slim mode
-	// indicator at the top and the footer shortcuts remain.
+	// Floating overview: all chrome is stripped — no app header, no indicator,
+	// no footer shortcuts — just the map.
 	if strings.Contains(v, "✓ Todoist") {
-		t.Fatal("overview should hide the app header (full screen)")
+		t.Fatal("overview should hide the app header")
 	}
-	if !strings.Contains(v, "OVERVIEW MODE") {
-		t.Fatal("overview should show the OVERVIEW MODE indicator")
-	}
-	if !strings.Contains(v, "Z/esc close") {
-		t.Fatal("overview should still show the footer shortcuts")
+	if strings.Contains(v, "OVERVIEW MODE") || strings.Contains(v, "Z/esc close") {
+		t.Fatal("floating overview should drop the indicator and footer")
 	}
 
 	// Read-only: editing/structural keys are ignored (d must not delete).
@@ -927,9 +968,50 @@ func TestMindMapColorCycle(t *testing.T) {
 	if got := m.ideas[0].Children[0].Children[0].Color; got != 2 {
 		t.Fatalf("O should propagate colour 2 to the child, got %d", got)
 	}
-	m = key(m, 'f') // background fill, this node only
+	m = key(m, 'f') // font colour, this node only
+	if m.ideas[0].Children[0].FG != 1 {
+		t.Fatalf("f should set font colour index 1, got %d", m.ideas[0].Children[0].FG)
+	}
+	m = key(m, 'g') // background fill, this node only
 	if m.ideas[0].Children[0].BG != 1 {
-		t.Fatalf("f should set background index 1, got %d", m.ideas[0].Children[0].BG)
+		t.Fatalf("g should set background index 1, got %d", m.ideas[0].Children[0].BG)
+	}
+	m = key(m, 'G') // background for node + descendants
+	if got := m.ideas[0].Children[0].Children[0].BG; got != 2 {
+		t.Fatalf("G should propagate background 2 to the child, got %d", got)
+	}
+}
+
+func TestMindMapFontColourAndStyle(t *testing.T) {
+	m := mindModel(t)
+	m.ideas[0].Children = []*MindNode{{Text: "A"}}
+	m = keyType(m, tea.KeyEnter)
+	m = key(m, 'l') // select A
+
+	// f cycles the font colour.
+	m = key(m, 'f')
+	if m.ideas[0].Children[0].FG != 1 {
+		t.Fatalf("f should set font colour index 1, got %d", m.ideas[0].Children[0].FG)
+	}
+	// y cycles the text style: normal → bold → italic → underline → normal.
+	for i, want := range []int{1, 2, 3, 0} {
+		m = key(m, 'y')
+		if m.ideas[0].Children[0].Style != want {
+			t.Fatalf("y press %d: style = %d, want %d", i+1, m.ideas[0].Children[0].Style, want)
+		}
+	}
+}
+
+func TestMindMapStyleSubtree(t *testing.T) {
+	m := mindModel(t)
+	m.ideas[0].Children = []*MindNode{{Text: "A", Children: []*MindNode{{Text: "A1"}}}}
+	m = keyType(m, tea.KeyEnter)
+	m = key(m, 'l') // select A
+
+	// Y applies the style to the node AND its children.
+	m = key(m, 'Y') // → bold (1)
+	if m.ideas[0].Children[0].Style != 1 || m.ideas[0].Children[0].Children[0].Style != 1 {
+		t.Fatalf("Y should set style on node + child, got %+v", m.ideas[0].Children[0])
 	}
 }
 

@@ -42,3 +42,29 @@ func TestDefaultSortIsNewestFirst(t *testing.T) {
 		t.Fatalf("default sortDesc = false, want true (descending / newest first)")
 	}
 }
+
+// TestSortDueUndatedLast verifies that tasks without a due date stay last in
+// BOTH ascending and descending due-date sorts (and likewise for deadline).
+func TestSortDueUndatedLast(t *testing.T) {
+	m := newTestModel()
+	base := []Task{
+		{ID: "none", Content: "no date"},
+		{ID: "early", Content: "early", DueDate: "2026-01-01"},
+		{ID: "late", Content: "late", DueDate: "2026-12-31"},
+	}
+	m.sortMode = sortDue
+
+	m.sortDesc = false // ascending: early, late, then undated
+	asc := append([]Task(nil), base...)
+	m.sortTasks(asc)
+	if asc[0].ID != "early" || asc[1].ID != "late" || asc[2].ID != "none" {
+		t.Fatalf("asc order wrong: %v", []string{asc[0].ID, asc[1].ID, asc[2].ID})
+	}
+
+	m.sortDesc = true // descending: late, early, then undated STILL last
+	desc := append([]Task(nil), base...)
+	m.sortTasks(desc)
+	if desc[0].ID != "late" || desc[1].ID != "early" || desc[2].ID != "none" {
+		t.Fatalf("desc order wrong (undated should stay last): %v", []string{desc[0].ID, desc[1].ID, desc[2].ID})
+	}
+}

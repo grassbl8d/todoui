@@ -15,6 +15,8 @@ type Idea struct {
 	Children    []*MindNode `json:"children,omitempty"`   // mind-map branches off this idea
 	Color       int         `json:"color,omitempty"`      // outline palette index (0 = default)
 	BG          int         `json:"bg,omitempty"`         // background palette index (0 = none)
+	FG          int         `json:"fg,omitempty"`         // font/text palette index (0 = default)
+	Style       int         `json:"style,omitempty"`      // text style: 0 normal, 1 bold, 2 italic, 3 underline
 	ProjectID   string      `json:"project_id,omitempty"` // the one project this idea's tasks go to
 	ProjectName string      `json:"project_name,omitempty"`
 }
@@ -30,6 +32,8 @@ type MindNode struct {
 	Done      bool        `json:"done,omitempty"`    // task completed (locally or via sync)
 	Color     int         `json:"color,omitempty"`   // outline palette index (0 = default)
 	BG        int         `json:"bg,omitempty"`      // background palette index (0 = none)
+	FG        int         `json:"fg,omitempty"`      // font/text palette index (0 = default)
+	Style     int         `json:"style,omitempty"`   // text style: 0 normal, 1 bold, 2 italic, 3 underline
 }
 
 // mindColorCount is how many colours the c/C/b/B cycle steps through (plus the
@@ -39,6 +43,12 @@ const mindColorCount = 10
 // nextMindColor advances a palette index, wrapping past the last colour back to
 // 0 (the default / no-colour state).
 func nextMindColor(i int) int { return (i + 1) % (mindColorCount + 1) }
+
+// mindStyleNames are the text styles cycled by S, in order (index = Style value).
+var mindStyleNames = []string{"normal", "bold", "italic", "underline"}
+
+// nextMindStyle advances the text-style index, wrapping back to normal (0).
+func nextMindStyle(i int) int { return (i + 1) % len(mindStyleNames) }
 
 // setSubtreeOutline sets the outline colour index on every node in the subtrees.
 func setSubtreeOutline(children []*MindNode, idx int) {
@@ -53,6 +63,22 @@ func setSubtreeBG(children []*MindNode, idx int) {
 	for _, n := range children {
 		n.BG = idx
 		setSubtreeBG(n.Children, idx)
+	}
+}
+
+// setSubtreeFG sets the font/text colour index on every node in the subtrees.
+func setSubtreeFG(children []*MindNode, idx int) {
+	for _, n := range children {
+		n.FG = idx
+		setSubtreeFG(n.Children, idx)
+	}
+}
+
+// setSubtreeStyle sets the text style on every node in the subtrees.
+func setSubtreeStyle(children []*MindNode, style int) {
+	for _, n := range children {
+		n.Style = style
+		setSubtreeStyle(n.Children, style)
 	}
 }
 

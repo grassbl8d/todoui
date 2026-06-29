@@ -332,7 +332,7 @@ func TestHomeFlash(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 100, 40
 	m.list.SetSize(100, 36)
-	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	m = nm.(model)
 	if !m.homeFlash {
 		t.Fatal("h should set the home flash")
@@ -783,7 +783,7 @@ func TestBackAndHomeNavigation(t *testing.T) {
 	selectProjItem(&m, "#Bills")
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	m = nm.(model)
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	m = nm.(model)
 	if m.projectView != "" || len(m.list.Items()) != 3 {
 		t.Fatalf("home: project=%q items=%d", m.projectView, len(m.list.Items()))
@@ -1152,7 +1152,7 @@ func TestOnlineSearchResults(t *testing.T) {
 		t.Fatalf("want 2 online results, got %d", got)
 	}
 	// home leaves the online view
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	if nm.(model).onlineView {
 		t.Fatal("home should leave the online view")
 	}
@@ -1459,7 +1459,7 @@ func TestDeadlineAndTodayFilters(t *testing.T) {
 		t.Fatalf("t should show 1 due-today task, got %d", got)
 	}
 	// home, then T → due today or overdue (tasks 1,2)
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	m = nm.(model)
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("T")})
 	m = nm.(model)
@@ -1467,7 +1467,7 @@ func TestDeadlineAndTodayFilters(t *testing.T) {
 		t.Fatalf("T should show 2 due/overdue tasks, got %d", got)
 	}
 	// d → deadline today (task 3)
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")}) // home first
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")}) // home first
 	m = nm.(model)
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("d")})
 	m = nm.(model)
@@ -1475,7 +1475,7 @@ func TestDeadlineAndTodayFilters(t *testing.T) {
 		t.Fatalf("d should show 1 deadline-today task, got %d", got)
 	}
 	// D → deadline today or earlier (tasks 3,4)
-	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("h")})
+	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(".")})
 	m = nm.(model)
 	nm, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("D")})
 	m = nm.(model)

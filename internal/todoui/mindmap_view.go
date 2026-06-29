@@ -118,6 +118,16 @@ func paletteColor(idx int) lipgloss.Color {
 	return mindPalette[idx-1]
 }
 
+// mindPaletteStrip renders the 10 cycle colours as small swatches, in the order
+// o/f/g step through them. Used in the styling footer row and the help screen.
+func mindPaletteStrip() string {
+	s := ""
+	for _, c := range mindPalette {
+		s += lipgloss.NewStyle().Background(c).Render("  ")
+	}
+	return s
+}
+
 // mindBox is one laid-out node in the diagram.
 type mindBox struct {
 	node     *MindNode // nil for the root idea
@@ -128,6 +138,8 @@ type mindBox struct {
 	text     string
 	outline  int    // outline colour index
 	bg       int    // background colour index
+	fg       int    // font/text colour index
+	style    int    // text style (0 normal, 1 bold, 2 italic, 3 underline)
 	w, h     int    // box size in cells (h is always 3)
 	x, y     int    // top-left cell
 	cy       int    // vertical centre row
@@ -136,7 +148,7 @@ type mindBox struct {
 }
 
 const (
-	mmMaxText = 26 // node text is truncated to this many runes
+	mmMaxText = 48 // fallback node-label truncation width (settings.NodeLabelLen overrides)
 	mmHGap    = 6  // cells between columns (room for the connector bus)
 	mmVGap    = 1  // blank rows between sibling subtrees
 	mmBoxH    = 3
@@ -144,6 +156,15 @@ const (
 
 // mmFlatten collapses newlines/leading-trailing space so a label fits one row.
 func mmFlatten(s string) string { return strings.ReplaceAll(strings.TrimSpace(s), "\n", " ") }
+
+// nodeLabelLen is the configured truncation width for node labels in the normal
+// map, falling back to mmMaxText when settings haven't been loaded.
+func (m model) nodeLabelLen() int {
+	if m.settings.NodeLabelLen >= 10 {
+		return m.settings.NodeLabelLen
+	}
+	return mmMaxText
+}
 
 // mmTruncate flattens whitespace and caps the text to max runes with an ellipsis.
 func mmTruncate(s string, max int) string {
@@ -220,12 +241,16 @@ func (m model) buildMindBoxes() (root *mindBox, all []*mindBox, w, h int) {
 			b.text = idea.Text
 			b.outline = idea.Color
 			b.bg = idea.BG
+			b.fg = idea.FG
+			b.style = idea.Style
 		default:
 			b.selected = node == selNode
 			b.editing = node == editNode
 			b.text = nodeLabel(node, false) // (+N) is rendered as a separate badge
 			b.outline = node.Color
 			b.bg = node.BG
+			b.fg = node.FG
+			b.style = node.Style
 			// Show a collapsed-children count even for a single child. Kept out of
 			// b.text so truncation of a long label can never swallow it.
 			if !m.mindOverview && node.Collapsed && len(node.Children) > 0 {
@@ -235,10 +260,10 @@ func (m model) buildMindBoxes() (root *mindBox, all []*mindBox, w, h int) {
 		if b.editing {
 			b.text = liveEdit
 			b.badge = ""
-		} else if m.mindOverview {
-			b.text = mmFlatten(b.text) // overview shows the full, untruncated label
+		} else if m.mindOverview || m.mindFullLabels {
+			b.text = mmFlatten(b.text) // overview / d-toggle: full, untruncated label
 		} else {
-			b.text = mmTruncate(b.text, mmMaxText)
+			b.text = mmTruncate(b.text, m.nodeLabelLen())
 		}
 		b.w = utf8.RuneCountInString(b.text) + 4 // 2 borders + 2 padding
 		if b.badge != "" {
@@ -314,14 +339,15 @@ func (m model) buildMindBoxes() (root *mindBox, all []*mindBox, w, h int) {
 
 // cell holds everything needed to render one canvas position.
 type cell struct {
-	ch    rune
-	bits  uint8
-	fixed bool // rune is final (rounded corner) — skip bit→rune pass
-	fg    lipgloss.Color
-	bg    lipgloss.Color
-	bold  bool
-	ul    bool // underline (used to mark the selected node)
-	dirty bool // anything was painted here
+	ch     rune
+	bits   uint8
+	fixed  bool // rune is final (rounded corner) — skip bit→rune pass
+	fg     lipgloss.Color
+	bg     lipgloss.Color
+	bold   bool
+	italic bool
+	ul     bool // underline (selection cue, or an underline text style)
+	dirty  bool // anything was painted here
 }
 
 // mindCanvas is a 2-D grid of cells.
@@ -367,7 +393,7 @@ func (c *mindCanvas) corner(x, y int, r rune, fg lipgloss.Color, bold bool) {
 	p.dirty = true
 }
 
-func (c *mindCanvas) put(x, y int, r rune, fg lipgloss.Color, bold, ul bool) {
+func (c *mindCanvas) put(x, y int, r rune, fg lipgloss.Color, bold, italic, ul bool) {
 	if !c.in(x, y) {
 		return
 	}
@@ -375,6 +401,7 @@ func (c *mindCanvas) put(x, y int, r rune, fg lipgloss.Color, bold, ul bool) {
 	p.ch = r
 	p.fg = fg
 	p.bold = bold
+	p.italic = italic
 	p.ul = ul
 	p.dirty = true
 }
@@ -395,6 +422,7 @@ func (c *mindCanvas) drawBox(b *mindBox) {
 
 	outCol := paletteColor(b.outline)
 	bgCol := paletteColor(b.bg)
+	fgCol := paletteColor(b.fg)
 
 	// The border always shows the node's own colour, so c/C are visible
 	// immediately. Selection is indicated by underlining the text instead.
@@ -408,6 +436,8 @@ func (c *mindCanvas) drawBox(b *mindBox) {
 		borderFg = subColor
 	}
 	switch {
+	case fgCol != "": // an explicit font colour wins, even over a filled background
+		textFg = fgCol
 	case bgCol != "":
 		textFg = mindInk
 	case b.isRoot:
@@ -416,7 +446,11 @@ func (c *mindCanvas) drawBox(b *mindBox) {
 		textFg = textColor
 	}
 	borderBold := b.selected || outCol != ""
-	textBold := b.isRoot || b.selected
+	// Text style (S cycle): 1 bold, 2 italic, 3 underline. Bold also when root/
+	// selected. Editing shows plain text so the live cursor reads clearly.
+	textBold := b.isRoot || b.selected || (!b.editing && b.style == 1)
+	textItalic := !b.editing && b.style == 2
+	textUL := !b.editing && b.style == 3
 
 	// Background fill across the whole box first.
 	if bgCol != "" {
@@ -439,13 +473,14 @@ func (c *mindCanvas) drawBox(b *mindBox) {
 	c.line(x0, b.cy, mbUp|mbDown, borderFg, borderBold)
 	c.line(x1, b.cy, mbUp|mbDown, borderFg, borderBold)
 
-	// Text (no per-character underline — selection is shown under the box).
+	// Text. Selection is shown under the box; an underline text style underlines
+	// the label itself.
 	tx := x0 + 2
 	for _, r := range b.text {
 		if tx >= x1 {
 			break
 		}
-		c.put(tx, b.cy, r, textFg, textBold, false)
+		c.put(tx, b.cy, r, textFg, textBold, textItalic, textUL)
 		tx++
 	}
 
@@ -462,7 +497,7 @@ func (c *mindCanvas) drawBox(b *mindBox) {
 			if tx >= x1 {
 				break
 			}
-			c.put(tx, b.cy, r, badgeFg, true, false)
+			c.put(tx, b.cy, r, badgeFg, true, false, false)
 			tx++
 		}
 	}
@@ -568,9 +603,17 @@ func (m model) mindMapView(header string) string {
 			accentKey.Render("H") + dim.Render(" help")
 	default:
 		// "H help" is accented first so it stays visible, matching the task view.
-		footer = accentKey.Render("H help") + dim.Render(
-			" · ↑↓/jk siblings · ←→/hl parent·child · ⇧↑↓ reorder · ⇧← promote · r root · / find · tab child · enter sibling · e edit · u undo · x cut · c copy · v/V paste · z zoom · Z overview · t task · "+
-				tHint+" · X done · bksp/del delete · o/O colour · f/F fill · p projects · s sync · b back")
+		main := accentKey.Render("H help") + dim.Render(
+			" · ↑↓/jk siblings · ←→/hl parent·child · ⇧↑↓ reorder · ⇧← promote · r root · / find · tab child · enter sibling · e edit · d full labels · u undo · x cut · c copy · v/V paste · z zoom · Z overview · t task · "+
+				tHint+" · X done · bksp/del delete · p projects · s sync · b back")
+		// Dedicated styling row: the colour/style controls plus the palette, so
+		// changing a node's look is always one glance away.
+		style := dim.Render("🎨 ") +
+			accentKey.Render("o/O") + dim.Render(" outline · ") +
+			accentKey.Render("f/F") + dim.Render(" font · ") +
+			accentKey.Render("g/G") + dim.Render(" background · ") +
+			accentKey.Render("y/Y") + dim.Render(" style   ") + mindPaletteStrip()
+		footer = main + "\n" + style
 	}
 
 	// Surface the transient status line (set by handlers like T) so the user
@@ -583,8 +626,9 @@ func (m model) mindMapView(header string) string {
 	// map gets the whole terminal minus the footer.
 	viewH := m.height - lipgloss.Height(header) - lipgloss.Height(footer) - 3 // title + gap + margin
 	if m.mindOverview {
-		// indicator row + a gap above and below the map + slack.
-		viewH = m.height - lipgloss.Height(footer) - 4
+		// Floating overview: no header/title/indicator/status/footer — the map
+		// gets the whole terminal (minus a top/bottom margin).
+		viewH = m.height - 2
 	}
 	if viewH < 3 {
 		viewH = 3
@@ -652,7 +696,7 @@ func (m model) mindMapView(header string) string {
 		var b strings.Builder
 		var run strings.Builder
 		var rFg, rBg lipgloss.Color
-		var rBold, rUL bool
+		var rBold, rItalic, rUL bool
 		flush := func() {
 			if run.Len() == 0 {
 				return
@@ -667,6 +711,9 @@ func (m model) mindMapView(header string) string {
 			if rBold {
 				st = st.Bold(true)
 			}
+			if rItalic {
+				st = st.Italic(true)
+			}
 			if rUL {
 				st = st.Underline(true)
 			}
@@ -675,19 +722,19 @@ func (m model) mindMapView(header string) string {
 		}
 		for x := scrollX; x < scrollX+viewW && x < cw; x++ {
 			p := cv.g[y][x]
-			fg, bg, bold, ul := p.fg, p.bg, p.bold, p.ul
+			fg, bg, bold, italic, ul := p.fg, p.bg, p.bold, p.italic, p.ul
 			if !p.dirty {
-				fg, bg, bold, ul = "", "", false, false
+				fg, bg, bold, italic, ul = "", "", false, false, false
 			}
 			if zoomDim && p.dirty {
-				// Flatten every painted cell to one faint colour (no fill,
-				// no bold, no underline) for the "blurred background" look.
-				fg, bg, bold, ul = mindBlurColor, "", false, false
+				// Flatten every painted cell to one faint colour (no fill, no
+				// bold/italic/underline) for the "blurred background" look.
+				fg, bg, bold, italic, ul = mindBlurColor, "", false, false, false
 			}
-			if run.Len() > 0 && (fg != rFg || bg != rBg || bold != rBold || ul != rUL) {
+			if run.Len() > 0 && (fg != rFg || bg != rBg || bold != rBold || italic != rItalic || ul != rUL) {
 				flush()
 			}
-			rFg, rBg, rBold, rUL = fg, bg, bold, ul
+			rFg, rBg, rBold, rItalic, rUL = fg, bg, bold, italic, ul
 			run.WriteRune(p.ch)
 		}
 		flush()
@@ -731,21 +778,10 @@ func (m model) mindMapView(header string) string {
 
 	body := lipgloss.JoinVertical(lipgloss.Left, lines...)
 	if m.mindOverview {
-		// Full-screen: no app header, no title line — just a slim mode indicator,
-		// the map, and the footer shortcuts. Scroll affordance moves to the footer.
-		indicator := lipgloss.NewStyle().Background(brandRed).Foreground(brightColor).
-			Bold(true).Render(" 🗺  OVERVIEW MODE ")
-		if bound != "" {
-			indicator += lipgloss.NewStyle().Foreground(projectColor).Render("  → " + bound)
-		}
-		indicator += dim.Render("   all expanded · read-only")
-		foot := footer
-		if len(sh) > 0 {
-			foot = footer + dim.Render("   more: "+strings.Join(sh, " "))
-		}
-		// Gaps above/below the map and a left margin so nothing hugs the edges.
-		content := lipgloss.JoinVertical(lipgloss.Left, indicator, "", body, "", foot)
-		return lipgloss.NewStyle().MarginLeft(mindOverviewMargin).Render(content)
+		// Floating overview: nothing but the map itself — no header, title,
+		// indicator, status, or footer. A top + left margin keeps it off the
+		// edges. (Z / esc still close it; the keys just aren't shown.)
+		return lipgloss.NewStyle().Margin(1, 0, 0, mindOverviewMargin).Render(body)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, header, titleLine, "", body, "", footer)
 }
@@ -892,10 +928,15 @@ var mindPaletteActions = []mindAction{
 	{"s", "Sync with Todoist", mindRuneMsg('s')},
 	{"o", "Outline colour — this node", mindRuneMsg('o')},
 	{"O", "Outline colour — node + children", mindRuneMsg('O')},
-	{"f", "Background fill — this node", mindRuneMsg('f')},
-	{"F", "Background fill — node + children", mindRuneMsg('F')},
+	{"f", "Font colour — this node", mindRuneMsg('f')},
+	{"F", "Font colour — node + children", mindRuneMsg('F')},
+	{"g", "Background — this node", mindRuneMsg('g')},
+	{"G", "Background — node + children", mindRuneMsg('G')},
+	{"y", "Text style — this node", mindRuneMsg('y')},
+	{"Y", "Text style — node + children", mindRuneMsg('Y')},
 	{"space", "Collapse / expand branch", mindRuneMsg(' ')},
 	{"Z", "Overview — full-screen, all expanded", mindRuneMsg('Z')},
+	{"d", "Toggle full node labels", mindRuneMsg('d')},
 	{"p", "Jump to the projects list", mindRuneMsg('p')},
 	{"H", "Mind-map help", mindRuneMsg('H')},
 	{"esc", "Save & back to ideas", tea.KeyMsg{Type: tea.KeyEsc}},
@@ -1043,12 +1084,6 @@ func (m model) mindHelpView(header string) string {
 		return "  " + keyStyle.Width(14).Render(k) + lipgloss.NewStyle().Foreground(textColor).Render(desc)
 	}
 
-	// A small swatch strip so the 10 colours are visible at a glance.
-	var swatches []string
-	for _, c := range mindPalette {
-		swatches = append(swatches, lipgloss.NewStyle().Background(c).Render("  "))
-	}
-
 	rows := []string{
 		yellow.Render("🗺  Mind-map keys"),
 		"",
@@ -1064,6 +1099,7 @@ func (m model) mindHelpView(header string) string {
 		row("", "the map stays navigable underneath; z / esc closes it"),
 		row("Z", "Overview — full-screen, all-expanded, read-only map"),
 		row("", "navigate to pan; Z / esc closes it"),
+		row("d", "Toggle full (untruncated) node labels"),
 		"",
 		head.Render("  Edit the tree"),
 		row("Tab", "Add a child of the selected node"),
@@ -1090,12 +1126,13 @@ func (m model) mindHelpView(header string) string {
 		row("s", "Sync — push tasks & pull completions from Todoist"),
 		row("", "completing in Todoist also ticks it here on sync"),
 		"",
-		head.Render("  Colour (10 colours, cycles)"),
-		row("o", "Cycle this node's Outline colour"),
-		row("O", "Outline colour for node + all children"),
-		row("f", "Cycle this node's background Fill"),
-		row("F", "Background fill for node + all children"),
-		"  " + dim.Render("palette: ") + strings.Join(swatches, ""),
+		head.Render("  Colour & style (cycle; press again to clear)"),
+		row("o / O", "Outline colour"),
+		row("f / F", "Font colour"),
+		row("g / G", "Background fill"),
+		row("y / Y", "Text style — normal / bold / italic / underline"),
+		"  " + dim.Render("lowercase = this node · uppercase = node + all children"),
+		"  " + dim.Render("palette ") + mindPaletteStrip(),
 		"",
 		head.Render("  Leave"),
 		row("p", "Jump to the projects list (view by project)"),
