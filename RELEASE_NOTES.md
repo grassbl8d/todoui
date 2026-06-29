@@ -23,6 +23,13 @@ suffix for the upcoming version.
 - **Sort bar in the task list**: a dedicated footer row shows the sort options
   (`1`–`7`) with the active one highlighted and its `↑`/`↓` direction — mirroring
   the mind map's styling bar.
+- **Reset mind-map styles (`a`/`A`)**: `a` clears the selected node's outline /
+  font / background colour and text style; `A` clears the node and all its
+  children. On the root (the whole map) it asks `y`/`n` first; `u` undoes it.
+- **Mind-map header**: the mind-map screens now show their own **❖ Mind map**
+  header (with the idea name and bound project) instead of the Todoist task bar —
+  they're local ideas, not Todoist items. The `todo-ui <version>` badge in the
+  top-right is restyled.
 - **Floating overview**: the mind-map overview (`Z`) is now a plain, full-screen
   floating map — no header, indicator, status, or footer. `Z`/`esc` still close.
 - **Mind-map node formatting**: in addition to the **outline** colour (`o`/`O`),
