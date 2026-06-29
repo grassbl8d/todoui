@@ -5,4 +5,4 @@ package todoui
 // Between releases this carries a "-dev" snapshot suffix for the upcoming
 // version; scripts/release.sh strips it to cut the clean release, then bumps it
 // to the next "-dev" — don't edit it by hand.
-var version = "v0.2.4-dev"
+var version = "v0.2.4"
