@@ -33,7 +33,9 @@ An explicit grouping mode for the task list, separate from sorting: group tasks
 by project, priority, label, due/added date, etc., with a real section header per
 group and a count. Builds on the existing sort subheaders — adds collapsible
 groups (fold/unfold a section) and lets you pick the grouping field independently
-of the sort order.
+of the sort order. The grouping field will be chosen with **`Ctrl`+a number**
+(mirroring the `1`–`7` sort keys), so e.g. `Ctrl+4` groups by project while the
+`4` sort still orders within each group.
 
 ## How this list works
 
